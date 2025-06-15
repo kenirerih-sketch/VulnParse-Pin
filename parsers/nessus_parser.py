@@ -3,6 +3,7 @@ from datetime import timezone
 from typing import Any, Dict, List, Optional
 import ipaddress
 from classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
+from json_parser import get_key_case_ins
 from parsers.base_parser import BaseParser
 from utils.normalizer import *
 from collections import Counter, defaultdict
@@ -45,7 +46,7 @@ class NessusParser(BaseParser):
         Parse a Nessus JSON vulnerability scan report into structured Python objects.
 
         This function processes a Nessus scan report, extracts relevant host and vulnerability 
-        details, enriches findings with EPSS scores, CISA KEV status, and exploit availability,
+        details,
         and structures them into a ScanResult object containing assets and findings.
 
         Args:
@@ -55,14 +56,15 @@ class NessusParser(BaseParser):
             ScanResult: An object containing structured scan metadata, assets, and vulnerability findings.
         """
         nessus_json = self.detect_and_transform_flat_json(nessus_json)
+        if "scan_metadata" in nessus_json and "scan_date" in nessus_json["scan_metadata"]:
+            scan_date = nessus_json["scan_metadata"].get("scan_date")
         
         metadata, report_data = self.normalize_structure(nessus_json)
         
         assets: Dict[str, Asset] = {}
         
-        source = coerce_str(metadata.get("source"), default="Unknown")
         
-        scan_date = coerce_date(metadata.get("scan_date"), default=None)
+        
         
         if isinstance(report_data, list) and report_data and any(k in report_data[0] for k in ["finding", "results"]):
             grouped_assets = self.group_findings_by_asset(report_data)
@@ -145,7 +147,7 @@ class NessusParser(BaseParser):
         vuln_count = sum(len(asset.findings) for asset in assets.values())
         
         metadata = ScanMetaData(
-            source=source,
+            source="Nessus",
             scan_date=scan_date,
             asset_count=asset_count,
             vulnerability_count=vuln_count,
@@ -264,7 +266,8 @@ class NessusParser(BaseParser):
                         "source": scan_metadata.get("name", "Unknown"),
                         "scan_date": scan_metadata.get("start_time", "Unavailable"),
                         "asset_count": len(assets_list),
-                        "vulnerability_count": sum(len(a["findings"]) for a in assets_list)
+                        "vulnerability_count": sum(len(a["findings"]) for a in assets_list),
+                        "parsed_at": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
                     },
                     "assets": assets_list
                 }
@@ -287,6 +290,7 @@ class NessusParser(BaseParser):
                 raise ValueError("Empty list provided - no data to normalize.")
 
         if self.is_nessus_scan_metadata(data):
+            log.log.print_info("Nessus 'scan_metadata' key detected.")
             return self.normalize_nessus_scan_metadata(data)
         elif self.is_nessus_source_scan_date(data):
             return self.normalize_nessus_source_scan_date(data)

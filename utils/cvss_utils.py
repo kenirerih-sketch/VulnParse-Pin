@@ -9,7 +9,7 @@ except ImportError:
     CVSS3 = None #Fallback if module isn't installed
     
     
-CVSS3_REGEX = r'^CVSS:3\.[0-1]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]$/'
+CVSS3_REGEX = r'^CVSS:3\.[0-1]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]$'
 
 def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     '''
@@ -28,7 +28,7 @@ def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     return bool(pattern.match(vector))
 
 
-def parse_cvss_vector(vector: str) -> Optional[dict]:
+def parse_cvss_vector(vector: str):
     '''
     Parse a CVSS v3.X vector string into its base score components.
     

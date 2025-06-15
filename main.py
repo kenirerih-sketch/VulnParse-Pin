@@ -1,13 +1,14 @@
 import json
 from parsers.nessus_parser import NessusParser
 from dataclasses import asdict
-from utils import logger_instance
 from utils.enricher import enrich_scan_results, load_epss_from_csv, load_kev_from_json
 import argparse
 import sys
 from utils.banner import print_banner
 from utils.logger import *
 import utils.logger_instance as log
+import os
+from parsers.__init__ import *
 
 def print_summary_banner(scan_result, output_file=None):
     '''
@@ -32,40 +33,42 @@ def print_summary_banner(scan_result, output_file=None):
         sum(1 for f in asset.findings if f.enriched) for asset in scan_result.assets
     )
     critical_findings = sum(
-        sum(1 for f in asset.findings if f.severity.lower() == 'critical') for asset in scan_result.assets
+        sum(1 for f in asset.findings if f.risk_band == 'Critical+') for asset in scan_result.assets
     )
     high_findings = sum(
-        sum(1 for f in asset.findings if f.severity.lower() == 'high') for asset in scan_result.assets
+        sum(1 for f in asset.findings if f.risk_band == 'High') for asset in scan_result.assets
     )
     medium_findings = sum(
-        sum(1 for f in asset.findings if f.severity.lower() == 'medium') for asset in scan_result.assets
+        sum(1 for f in asset.findings if f.risk_band == 'Medium') for asset in scan_result.assets
     )
     low_findings = sum(
-        sum(1 for f in asset.findings if f.severity.lower() == 'low') for asset in scan_result.assets
+        sum(1 for f in asset.findings if f.risk_band == 'Low') for asset in scan_result.assets
     )
     
     print("\n" + "="*60)
     print("🛡️                  VulnParse-Pin Scan Summary             🛡️")
     print("="*60)
-    print(f" Total Assets Analyzed        : {total_assets}")
-    print(f" Total Findings Triaged      : {total_findings}")
-    print(f" Average Asset Risk Score   : {avg_risk_score}")
+    print(f" Total Assets Analyzed            : {total_assets}")
+    print(f" Total Findings Triaged           : {total_findings}")
+    print(f" Average Asset Risk Score         : {avg_risk_score}")
     if highest_risk_asset:
-        print(f" Highest Risk Asset     : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score})")
+        print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score})")
     else:
         print(" Highest Risk Asset: N/A")
-    print(f" Critical Findings          : {critical_findings}")
-    print(f" High Findings              : {high_findings}")
-    print(f" Medium Findings            : {medium_findings}")
-    print(f" Low Findings               : {low_findings}")
-    print(f" Enriched Findings          : {enriched_findings}")
+    print(f"🔥 Critical+ Risk Findings        : {critical_findings}")
+    print(f"⚠️  High Risk Findings             : {high_findings}")
+    print(f"🟡 Medium Risk Findings           : {medium_findings}")
+    print(f"🟢 Low Risk Findings              : {low_findings}")
+    print(f"📊 Enriched Findings              : {enriched_findings}")
     if output_file:
-        print(f" Output Location            : {output_file}")
+        print(f"📁 Output Location                : {output_file}")
     print("="*60 + "\n")
     log.log.logger.info(f"Assets Analyzed: {total_assets}," 
                 f"Findings Triaged: {total_findings}," 
                 f"Average Risk Score: {avg_risk_score},"
-                f"Highest Risk Asset: {highest_risk_asset.hostname if highest_risk_asset else 'N/A'}")
+                f"Highest Risk Asset: {highest_risk_asset.hostname if highest_risk_asset else 'N/A'},"
+                f"Critical+: {critical_findings}, High: {high_findings}, Medium: {medium_findings}, Low: {low_findings}"
+                )
 
 def write_output(data, file_path, pretty_print=False):
     '''
@@ -98,23 +101,50 @@ def write_output(data, file_path, pretty_print=False):
                 log.logger.exception(f"Exception: {e}")
                 sys.exit(1)
                 
+def valid_input_file(path):
+    if not os.path.isfile(path):
+        raise argparse.ArgumentTypeError(f"File: '{path}' does not exist or is not a file.")
+    if not os.access(path, os.R_OK):
+        raise argparse.ArgumentTypeError(f"File: '{path}' is not readable.")
+    return path
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="VulnParse-Pin: Vulnerability triage tool", usage="%(prog)s -f file [options]")
-    parser.add_argument("--file", "-f", help="Path to vulnerability scan file", required=True)
+def valid_log_level(level):
+    levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    lvl = level.upper()
+    if lvl not in levels:
+        raise argparse.ArgumentTypeError(f"Invalid log level '{level}. Choce from {levels}.")
+    return lvl
+    
+def get_args():
+    parser = argparse.ArgumentParser(
+        description="VulnParse-Pin: Enrich, prioritize, and triage vulnerability scan results.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--file", "-f", help="Path to vulnerability scan file", required=True, type=valid_input_file)
     parser.add_argument("--enrich-kev", nargs="?", const="https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", help="Path/URL to CISA KEV JSON or JSON.gz file. If omitted, uses official CISA KEV feed.")
     parser.add_argument("--enrich-epss", nargs="?", const="https://epss.cyentia.com/epss_scores-current.csv.gz", help="Path/URL to EPSS CSV or CSV.gz file. If omitted, use official EPSS feed.")
     parser.add_argument("--output", "-o", metavar="FILE", help="File to output results to. Default is JSON")
     parser.add_argument("--pretty-print", action="store_true", help="Output the JSON results with identation for readability to cli")
     parser.add_argument("--log-file", default="vulnparse_pin.log", help="Log File destination.")
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRTICAL"], help="Sets Logging level for log.")
-    # TODO: More args to come
-    return parser.parse_args()
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRTICAL"], help="Sets Logging level for log.", type=valid_log_level)
+    parser.add_argument("--version", action="version", version="VulnParse-Pin v0.3", help="Show program version and exit.")
+    
+    args = parser.parse_args()
+    
+    
+    if args.output:
+        output_dir = os.path.dirname(os.path.abspath(args.output)) or '.'
+        if not os.access(output_dir, os.W_OK):
+            parser.error(f"Output director '{output_dir}' is not writable.")
+        
+    return args
+                
 
 def main():
     print_banner()
     
-    args = parse_args()
+    args = get_args()
+    
     
     log.log = LoggerWrapper(args.log_file, args.log_level)
     
@@ -131,7 +161,7 @@ def main():
         sys.exit(1)
         
     # Available parsers
-    parsers = [NessusParser()] #TODO: Extend Parser classes
+    parsers = [NessusParser(), OpenVASParser()] #TODO: Extend Parser classes
     
     log.log.print_info("Scanning JSON structure to determine the type of parser to use...")
     parser_used = None

@@ -121,6 +121,41 @@ def load_kev_from_json(path_url: str) -> Dict[str, bool]:
     
     return kev_data
 
+def calculate_risk_score(cvss_score: float, exploit_available: bool, cisa_kev: bool, epss_score: float):
+    raw_risk_score = cvss_score
+    
+    # Add enrichment weights
+    if exploit_available:
+        raw_risk_score += 2
+    if cisa_kev:
+        raw_risk_score += 2
+    if epss_score >= 0.9:
+        raw_risk_score += 2
+    elif epss_score >= 0.7:
+        raw_risk_score += 1
+        
+    # cap raw risk at 15 max.
+    if raw_risk_score > 15.0:
+        raw_risk_score = 15.0
+        
+    # Derived capped 0-10 operational risk score
+    risk_score = min(raw_risk_score, 10.0)
+    
+    # Determine risk band
+    risk_band = determine_risk_band(raw_risk_score)
+    
+    return raw_risk_score, risk_score, risk_band
+
+def determine_risk_band(raw_risk_score):
+    if raw_risk_score >= 12:
+        return "Critical+"
+    elif raw_risk_score >= 8:
+        return "High"
+    elif raw_risk_score >= 5:
+        return "Medium"
+    else:
+        return "Low"
+
 def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, epss_data: Dict[str, float] = None) -> None:
     '''
     Enrich the findings in a ScanResult object with EPSS Score, CISA KEV status, exploit indicators, and recalculate triage priority.
@@ -137,28 +172,45 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
     
     for asset in results.assets:
         for finding in asset.findings:
-            if finding.cves:
-                # Enrich CISA KEV Status
-                finding.cisa_kev = any(cve in kev_data for cve in finding.cves)
-                # Enrich EPSS Score
-                finding.epss_score = max([epss_data.get(cve, 0.0) for cve in finding.cves])
-            else:
-                finding.epss_score = 0.0
-                finding.cisa_kev = False
+            cisa_hits = []
+            epss_scores = []
+            
+            for cve in finding.cves:
+                # CISA KEV Enrichment
+                kev_hit = kev_data.get(cve.upper(), False)
+                cisa_hits.append(kev_hit)
+                if kev_hit:
+                    log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} found in CISA KEV")
+                else:
+                    log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No CISA KEV record for {cve}")
+                    
+                # EPSS Score Enrichment
+                epss_score = epss_data.get(cve)
+                if epss_score is not None:
+                    epss_scores.append(epss_score)
+                    log.log.print_info(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} EPSS Score: {epss_score}")
+                else:
+                    log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No EPSS Score for {cve}")
+                    epss_scores.append(0.0)
+
+            # Assign KEV and max EPSS to finding level
+            finding.cisa_kev = any(cisa_hits)
+            finding.epss_score = max(epss_scores) if epss_scores else 0.0
                 
-            # Get CVSS Vectors
+            # Get CVSS Vectors w/ Validation / Reconciliation
             vector = finding.cvss_vector
             if vector:
                 if is_valid_cvss_vector(vector):
                     cvss_data = parse_cvss_vector(vector)
+                    log.log.print_info(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} Validating and reconciling CVSS Vector...")
                     if cvss_data:
-                        log.log.print_info(f"{finding.vuln_id} Base score from vector: {cvss_data['base']}")
+                        log.log.print_info(f"{finding.vuln_id} Base score from vector: {cvss_data[0]}")
                         
                         # Auto-Reconcile CVSS base score if it differs by tolerance.
-                        if abs(cvss_data['base'] - (finding.cvss_score or 0.0)) > 0.1:
-                            log.log.print_warning(f"Score mismatch for {finding.vuln_id}: vector {cvss_data['base']} vs field: {finding.cvss_score}")
-                            log.log.print_success(f"Overwriting cvss score with value from CVSS Vector: {cvss_data['base']}")
-                            finding.cvss_score = cvss_data['base']
+                        if abs(cvss_data[0] - (finding.cvss_score or 0.0)) > 0.1:
+                            log.log.print_warning(f"Score mismatch for {finding.vuln_id}: vector {cvss_data[0]} vs field: {finding.cvss_score}")
+                            log.log.print_success(f"Overwriting cvss score with value from CVSS Vector: {cvss_data[0]}")
+                            finding.cvss_score = cvss_data[0]
                             
                     else:
                         log.logger.debug(f"Invalid CVSS vector for {finding.vuln_id}")
@@ -166,18 +218,33 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                     log.log.print_error(f"Invalid CVSS vector format for {finding.vuln_id}: {vector}")
                     
             # Calculate Risk_Score
-            finding.risk_score = round(
-                (finding.cvss_score / 10.0 * 0.4) +
-                (finding.epss_score * 0.3) +
-                (1.0 if finding.cisa_kev else 0.0) * 0.2 +
-                (1.0 if finding.exploit_available else 0.0) * 0.1, 2
+            cvss = finding.cvss_score or 0.0
+            epss = finding.epss_score or 0.01 # Prevent zero-risk bias
+            
+            # Risk Calculation
+            raw_risk_score, risk_score, risk_band = calculate_risk_score(
+                cvss_score=cvss,
+                exploit_available=finding.exploit_available,
+                cisa_kev=finding.cisa_kev,
+                epss_score=epss
             )
+            if raw_risk_score > 10.0:
+                log.log.print_warning(f"{Fore.LIGHTRED_EX}[RiskCalc]{Style.RESET_ALL} Risk Score for {finding.vuln_id} capped at 10.0 (Raw Score: {Fore.LIGHTRED_EX}{raw_risk_score}{Style.RESET_ALL})")
+            else:
+                log.log.print_info(f"{Fore.LIGHTRED_EX}[RiskCalc]{Style.RESET_ALL} {finding.vuln_id} Raw Risk Score: {Fore.LIGHTRED_EX}{raw_risk_score}{Style.RESET_ALL}")
+            log.log.print_info(f"{Fore.LIGHTRED_EX}[RiskCalc]{Style.RESET_ALL} {finding.vuln_id} Final Risk Score: {Fore.LIGHTRED_EX}{risk_score}{Style.RESET_ALL} | Triage Priority: {Fore.LIGHTRED_EX}{risk_band}{Style.RESET_ALL} | ")
+            
+            # Set risk score attribs
+            finding.raw_risk_score=raw_risk_score
+            finding.risk_score=risk_score
+            finding.risk_band=risk_band
+
                 
             # Recalculate Triage Priority
             finding.triage_priority = determine_triage_priority(
                 finding.severity,
-                finding.cvss_score or 0.0,
-                finding.epss_score or 0.0,
+                cvss,
+                epss,
                 finding.cisa_kev,
                 finding.exploit_available
             )

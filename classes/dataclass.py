@@ -15,7 +15,9 @@ class Finding:
     cvss_vector: Optional[str] = None
     exploit_available: Optional[bool] = None
     risk: Optional[str] = None
+    raw_risk_score: Optional[float] = None
     risk_score: Optional[float] = None
+    risk_band: Optional[str] = None
     affected_port: Optional[int] = None
     protocol: Optional[str] = None
     detection_plugin: Optional[str] = None
