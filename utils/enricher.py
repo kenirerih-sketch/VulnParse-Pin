@@ -11,6 +11,8 @@ from utils.triage_priority_helper import determine_triage_priority
 from .logger import *
 from . import logger_instance as log
 
+
+
 def get_epss_score(cves: List[str], epss_data: Dict[str, float]) -> float:
     # Let's return the highest EPSS score found for a list of CVES.
     scores = [epss_data.get(cve, 0) for cve in cves]
@@ -165,6 +167,12 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
         kev_data (Dict[str, bool], Optional): Mapping of CVE IDs to CISA KEV status.
         epss_data (Dict[str, float], Optional): Mapping of CVE IDs to EPSS Scores.
     '''
+    miss_logger = EnrichmentMissLogger()
+    
+    baseline_risk_count = 0
+    total_cves = 0
+    total_kev_hits = 0
+    total_epss_misses = 0
     
     kev_data = kev_data or {}
     epss_data = epss_data or {}
@@ -174,15 +182,21 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
         for finding in asset.findings:
             cisa_hits = []
             epss_scores = []
+            enrichment_attempted = False
             
             for cve in finding.cves:
+                total_cves += 1
+                enrichment_attempted = True
+                
                 # CISA KEV Enrichment
                 kev_hit = kev_data.get(cve.upper(), False)
                 cisa_hits.append(kev_hit)
                 if kev_hit:
+                    total_kev_hits += 1
                     log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} found in CISA KEV")
                 else:
                     log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No CISA KEV record for {cve}")
+                    miss_logger.log_miss(cve, cisa_kev=False, epss_score=None)
                     
                 # EPSS Score Enrichment
                 epss_score = epss_data.get(cve)
@@ -192,6 +206,8 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                 else:
                     log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No EPSS Score for {cve}")
                     epss_scores.append(0.0)
+                    total_epss_misses += 1
+                    miss_logger.log_miss(cve, cisa_kev=kev_hit, epss_score=None)
 
             # Assign KEV and max EPSS to finding level
             finding.cisa_kev = any(cisa_hits)
@@ -220,6 +236,13 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
             # Calculate Risk_Score
             cvss = finding.cvss_score or 0.0
             epss = finding.epss_score or 0.01 # Prevent zero-risk bias
+            
+            # Baseline risk adjustment if missing CVSS but has exploit/high+ severity or risk band
+            if cvss == 0.0 and (finding.exploit_available or finding.severity in ['Critical', 'High']):
+                baseline_risk_count += 1
+                baseline_risk = 7
+                log.log.print_warning(f"{Fore.LIGHTRED_EX}[RiskCalc]{Style.RESET_ALL} Missing CVSS for {finding.vuln_id}, setting baseline risk {Fore.LIGHTRED_EX}{baseline_risk}{Style.RESET_ALL} due to exploit/high-critical severity")
+                cvss = baseline_risk
             
             # Risk Calculation
             raw_risk_score, risk_score, risk_band = calculate_risk_score(
@@ -250,11 +273,20 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
             )
             
             # Update enrichment flag
-            finding.enriched = any([
-                finding.epss_score > 0.0,
-                finding.cisa_kev,
-                finding.exploit_available])
+            finding.enriched = enrichment_attempted and (
+                any(cisa_hits) or
+                any(score > 0.0 for score in epss_scores) or
+                finding.exploit_available)
             
         asset.avg_risk_score = round(
             sum(f.risk_score for f in asset.findings) / len(asset.findings), 2
         ) if asset.findings else 0.0
+        
+        print(f"{Fore.LIGHTMAGENTA_EX}==============[Enrichment Summary]=============={Style.RESET_ALL}")
+        log.log.print_info(f"   Total CVEs Processed : {total_cves}")
+        log.log.print_info(f"   Total CISA KEV Hits : {total_kev_hits}")
+        log.log.print_info(f"   Total EPSS Misses : {total_epss_misses}")
+        log.log.print_info(f"   Total Findings Rx Baseline Risk Adjustment: {baseline_risk_count}")
+        print(f"{Fore.LIGHTMAGENTA_EX}============[Enrichment Summary End]============{Style.RESET_ALL}")
+        
+        miss_logger.write_log()

@@ -1,6 +1,7 @@
 
 from datetime import datetime, timezone
 from email.policy import default
+import hashlib
 from multiprocessing import Value
 from json_parser import get_key_case_ins
 import utils.logger_instance as log
@@ -63,12 +64,11 @@ class OpenVASParser(BaseParser):
                     shodan_data=None
                 )
                 
-            
-            
+                
             tags = self.get_key_cins(item.get("nvt", {}), ["tags"], default="")
 
 
-            vuln_id = coerce_str(self.get_key_cins(item["nvt"], ["cve", "oid", "cves"], default="N/A"))
+            vuln_id = self.get_vuln_id(item)
             title = coerce_str(self.get_key_cins(item["nvt"], ["name", "title"], default="N/A"))
             description = coerce_str(self.get_key_cins(item, ["description"], default="N/A"))
             severity = coerce_severity(self.get_key_cins(item, ["threat", "severity"], default="N/A"))
@@ -155,10 +155,8 @@ class OpenVASParser(BaseParser):
                     if str(severity).isdigit():
                         severity = self.convert_sev_num(severity)
                     cves = self.get_key_cins(host, ["cves", "cve"], default="")
-                    log.log.print_info(f"PRe-processed CVES: {cves}")
                     if cves:
                         cves = self.convert_cves_str_list(cves)
-                        log.log.print_info(f" Post Processed CVES: {cves}")
                     port = host.get("port", "N/A")
                         
                     result_item = {
@@ -285,4 +283,27 @@ class OpenVASParser(BaseParser):
         else:
             return []
         
+    def get_vuln_id(self, item):
+        nvt_key = item.get("nvt", {})
         
+        try:
+            vuln_id = nvt_key.get("cve") or nvt_key.get("oid")
+            if isinstance(vuln_id, list):
+                return vuln_id[0]
+            elif isinstance(vuln_id, str) and vuln_id.strip():
+                return [c.strip() for c in vuln_id.split(",") if c.strip()][0]
+        except (ValueError, IndexError, KeyError, TypeError) as e:
+            log.log.print_error(f"ValueError when retrieving vuln_id: {e}")
+        
+        host = item.get("host", "unknown_post")
+        port = item.get("port", "unknown_port")
+        title = nvt_key.get("name", "unknown_title")
+        
+        data_to_hash = f"{host}:{port}:{title}"
+        
+        log.log.print_info(f"No vuln_id found - generating fallback hash for {host}:{port}:{title}")
+        
+        hashed_fb = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()[:12]
+        
+        return str(hashed_fb)
+            
