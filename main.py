@@ -5,10 +5,12 @@ from utils.enricher import enrich_scan_results, load_epss_from_csv, load_kev_fro
 import argparse
 import sys
 from utils.banner import print_banner
+from utils.exploit_enrichment_service import DEFAULT_LOCAL_PATH, load_exploit_data
 from utils.logger import *
 import utils.logger_instance as log
 import os
 from parsers.__init__ import *
+from utils.exploit_enrichment_service import *
 
 def print_summary_banner(scan_result, output_file=None):
     '''
@@ -23,6 +25,9 @@ def print_summary_banner(scan_result, output_file=None):
     '''
     total_assets = len(scan_result.assets)
     total_findings = sum(len(asset.findings) for asset in scan_result.assets)
+    exploit_findings = sum(
+        sum(1 for f in asset.findings if getattr(f, 'exploit_available', False)) for asset in scan_result.assets
+        )
     avg_risk_score = round(
         sum(asset.avg_risk_score for asset in scan_result.assets) / total_assets, 2
     ) if total_assets else 0.0
@@ -55,6 +60,7 @@ def print_summary_banner(scan_result, output_file=None):
         print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score})")
     else:
         print(" Highest Risk Asset: N/A")
+    print(f"💣 Findings with Known Exploits   : {exploit_findings}")
     print(f"🔥 Critical+ Risk Findings        : {critical_findings}")
     print(f"⚠️  High Risk Findings             : {high_findings}")
     print(f"🟡 Medium Risk Findings           : {medium_findings}")
@@ -127,7 +133,10 @@ def get_args():
     parser.add_argument("--pretty-print", action="store_true", help="Output the JSON results with identation for readability to cli")
     parser.add_argument("--log-file", default="vulnparse_pin.log", help="Log File destination.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRTICAL"], help="Sets Logging level for log.", type=valid_log_level)
-    parser.add_argument("--version", action="version", version="VulnParse-Pin v0.3", help="Show program version and exit.")
+    parser.add_argument("--version", "-v", action="version", version="VulnParse-Pin v0.3", help="Show program version and exit.")
+    parser.add_argument("--exploit-source", "-es", choices=['online', 'offline'], default='online', help="Select if you want to pull exploit dataset from an online or offline source.")
+    parser.add_argument("--exploit-db", "-edb", type=str, default=DEFAULT_LOCAL_PATH, help="Path to offline exploit database (CSV)")
+    parser.add_argument("--enrich-exploit", "-ex", action="store_true", help="Enrich findings with exploit availability info.")
     
     args = parser.parse_args()
     
@@ -181,6 +190,15 @@ def main():
     kev_data = None
     epss_data = None
     
+    # Load Exploit-DB if flagged.
+    exploit_data = None
+    if args.enrich_exploit:
+        log.log.print_info(f"{Fore.LIGHTGREEN_EX}[Enrich-Exploit]{Style.RESET_ALL}Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{args.exploit_source.upper()}{Style.RESET_ALL} source...")
+        exploit_data = load_exploit_data(args.exploit_source, args.exploit_db)
+        log.log.print_success(f"{Fore.LIGHTGREEN_EX}[Enrich-Exploit]{Style.RESET_ALL}Loaded Exploit-DB data ({len(exploit_data)} CVEs with exploits)")
+        
+    log.log.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings")
+    
     if args.enrich_kev:
         log.log.print_info(f"Loading CISA KEV data from {Fore.LIGHTYELLOW_EX}{args.enrich_kev}{Style.RESET_ALL}")
         kev_data = load_kev_from_json(args.enrich_kev)
@@ -195,8 +213,19 @@ def main():
     if kev_data or epss_data:
         enrich_scan_results(scan_result, kev_data, epss_data)
         log.log.print_success(f"Enrichments Applied")
-        
-    log.log.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings")
+
+    # Apply exploit enrichments
+    if args.enrich_exploit and exploit_data:
+        for asset in scan_result.assets:
+            enriched_findings = enrich_exploit_availability(asset.findings, exploit_data)
+            asset.findings = enriched_findings
+        log.log.print_success(f"{Fore.LIGHTGREEN_EX}[Enrich-Exploit]{Style.RESET_ALL}Exploit enrichment applied to findings.")
+    
+    # Do Post-Processing enrichment status update.
+    for asset in scan_result.assets:
+        for finding in asset.findings:
+            update_enrichment_status(finding)
+    
         
     if args.output:
         write_output(data=scan_result, file_path=args.output, pretty_print=args.pretty_print)

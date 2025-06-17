@@ -5,6 +5,7 @@ import csv
 import requests
 import os
 import json
+
 from .cvss_utils import is_valid_cvss_vector, parse_cvss_vector
 from classes.dataclass import ScanResult
 from utils.triage_priority_helper import determine_triage_priority
@@ -157,6 +158,12 @@ def determine_risk_band(raw_risk_score):
         return "Medium"
     else:
         return "Low"
+    
+def update_enrichment_status(finding):
+    if finding.exploit_available or finding.epss_score or finding.cisa_kev:
+        finding.enriched = True
+    else:
+        finding.enriched = False
 
 def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, epss_data: Dict[str, float] = None) -> None:
     '''
@@ -275,7 +282,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
             # Update enrichment flag
             finding.enriched = enrichment_attempted and (
                 any(cisa_hits) or
-                any(score > 0.0 for score in epss_scores) or
+                any(score > 0.1 for score in epss_scores) or
                 finding.exploit_available)
             
         asset.avg_risk_score = round(
