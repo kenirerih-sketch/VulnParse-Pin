@@ -1,11 +1,9 @@
-
+import re
 from datetime import datetime, timezone
-from email.policy import default
 import hashlib
-from multiprocessing import Value
-from json_parser import get_key_case_ins
+from utils.cvss_utils import is_valid_cvss_vector
 import utils.logger_instance as log
-from typing import Any, Counter, Dict, List, Optional
+from typing import Any, Counter, Dict, List, Optional, Union
 from classes.dataclass import ScanResult, ScanMetaData, Asset, Finding
 from parsers.base_parser import BaseParser
 from utils.normalizer import coerce_float, coerce_int, coerce_list, coerce_severity, coerce_str
@@ -18,7 +16,16 @@ class OpenVASParser(BaseParser):
             lambda d: "report" in d and isinstance(d["report"].get("results"), list),
             
             # Pattern 2: Check for flat openvas schema. 'scan_id' and 'vulns'[] key
-            lambda d: isinstance(d, dict) and self.get_key_cins(data, ["scan_id", "vulns"])
+            lambda d: isinstance(d, dict) and self.get_key_cins(data, ["scan_id", "vulns"]),
+            
+            # Pattern 3: Check for flat 'results' key with list of findings.
+            lambda d: "results" in d and any(
+                isinstance(item, dict) and (
+                    "cvss_base_vector" in item or
+                    "qod" in item or
+                    "affected_hosts" in item
+                ) for item in d.get("results", [])
+            )
         ]
         
         for pattern in detection_patterns:
@@ -71,18 +78,35 @@ class OpenVASParser(BaseParser):
             vuln_id = self.get_vuln_id(item)
             title = coerce_str(self.get_key_cins(item["nvt"], ["name", "title"], default="N/A"))
             description = coerce_str(self.get_key_cins(item, ["description"], default="N/A"))
+            if description in ["null", ""] or None:
+                description = "No description available"
             severity = coerce_severity(self.get_key_cins(item, ["threat", "severity"], default="N/A"))
             cves_raw = self.convert_cves_str_list(self.get_key_cins(item.get("nvt", {}), ["cve", "cves"], default=[]))
-            cvss_score = self.parse_cvss_score(tags)
+            cves_raw = list(set(cves_raw))
+            
+            if tags:
+                cvss_score = self.parse_cvss_score(tags)
             if not cvss_score:
                 coerce_float(self.get_key_cins(item["nvt"], ["cvss_base", "cvss", "cvss_score", "cvss_base_score"], default=0.0))
+            else:
+                cvss_score = 0.0
             cvss_vector = coerce_str(self.get_key_cins(item["nvt"], ["cvss_base_vector", "cvss_vector"], default="N/A"))
+            if not is_valid_cvss_vector(cvss_vector):
+                cvss_vector = "Unknown"
             references_raw = coerce_str(self.get_key_cins(item["nvt"], ["tags", "references"], default=""))
             references_list = coerce_list([ref.strip() for ref in references_raw.split(";")] if references_raw else [])
             affected_port_raw = coerce_str(self.get_key_cins(item, ["port"], default="N/A"))
-            affected_port = coerce_int(affected_port_raw.split("/")[0])
+            affected_port = affected_port_raw
+            if affected_port != "N/A":
+                affected_port = coerce_int(affected_port_raw.split("/")[0])
             solution = coerce_str(self.get_key_cins(item, ["solution"], default="N/A"))
-            protocol = coerce_str(self.get_key_cins(item, ["port"], default="N/A")).split("/")[1]
+            protocol = coerce_str(self.get_key_cins(item, ["port"], default="N/A"))
+            if protocol != "N/A" and protocol is not isinstance(protocol, int):
+                parts = protocol.split("/")
+                if len(parts) > 1:
+                    protocol = parts[1]
+                else:
+                    protocol = "N/A"
             
             exploit_indicators = ["exploit", "metasploit", "public exploit", "poc available", "poc"]
             search_text = f"{solution or ''} {description or ''}".lower()
@@ -178,7 +202,7 @@ class OpenVASParser(BaseParser):
                     results.append(result_item)
                     
                 if not isinstance(results, list):
-                    raise ValueError("[FlatJSONTransform] Transformation failed, 'results' is not a list.")
+                    raise ValueError("[FlatJSONTransform] Transformation failed, var: 'results' is not a list.")
                 return {
                     "report": {
                         "scan_start": data.get("scan_start", "N/A"),
@@ -188,6 +212,61 @@ class OpenVASParser(BaseParser):
                 }
             else:
                 log.log.print_error("vulns list is empty. Unable to transform schema.")
+                
+        elif isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
+            log.log.print_info(f"Detected OpenVAS JSON with flat results list")
+            
+            results = []
+            hosts = data.get("results", [])
+            
+            if hosts:
+                for host in hosts:
+                    # Normalize what's possible with info given.
+                    severity = host.get("severity", "N/A")
+                    if str(severity).isdigit():
+                        severity = self.convert_sev_num(severity)
+                    cves = self.get_key_cins(host, ["cves", "cve"], default=[])
+                    if not cves:
+                        nested_cve = self.detect_nested_key(host, "cve")
+                        if nested_cve:
+                            try:
+                                cves = nested_cve.get("cve", [])
+                            except Exception as e:
+                                log.log.logger.exception(f"Exception: {e}")
+                    if cves is not None and cves != "":
+                        cves = self.convert_cves_str_list(cves)
+                    else:
+                        cves = []
+                    port = host.get("port", "N/A")
+                    # Building finding_item
+                    
+                    result_item = {
+                        "host": self.get_key_cins(host, ["host", "hostname", "host-id", "host_name", "host-name"], default="N/A"),
+                        "ip": self.get_key_cins(host, ["ip", "ip_address", "host-ip", "ip-address", "host"], default="N/A"),
+                        "port": port,
+                        "description": self.get_key_cins(host, ["description"], default="N/A"),
+                        "severity": severity,
+                        "threat": self.get_key_cins(host, ["threat", "severity"], default="N/A"),
+                        "solution": self.get_key_cins(host, ["solution"], default="N/A"),
+                        "nvt": {
+                            "cve": cves,
+                            "cvss_base_vector": self.get_key_cins(host, ["cvss_base_vector"], default=""),
+                            "name": self.get_key_cins(host, ["name"], default="N/A"),
+                            "cvss_base": self.get_key_cins(host, ["cvss_base", "cvss_base_score", "cvss"], default="N/A"),
+                            "tags": self.get_key_cins(host, ["tags", "references"], default="N/A")
+                        }
+                    }
+                    results.append(result_item)
+                    
+                if not isinstance(results, list):
+                    raise ValueError("[FlatJSONTransform] Transformation failed, var: 'results' is not a list.")
+                return {
+                    "report": {
+                        "scan_start": data.get("scan_start", "N/A"),
+                        "scan_end": data.get("scan_end", "N/A"),
+                        "results": results
+                    }
+                }
         else:
             log.log.print_warning("Unknown dict formation - returning as-is.")
             return data
@@ -209,6 +288,10 @@ class OpenVASParser(BaseParser):
             transformed = self.detect_and_transform_flat_json(data)
             return self.normalize_openvas_standard(transformed)
         
+        elif self.is_flat_results_openvas(data):
+            transformed = self.detect_and_transform_flat_json(data)
+            return self.normalize_openvas_standard(transformed)
+        
         else:
             raise ValueError("Unknown or unsupported OpenVAS data structure for normalization.")
             
@@ -220,6 +303,9 @@ class OpenVASParser(BaseParser):
     
     def is_flat_openvas(self, data):
         return isinstance(data, dict) and self.get_key_cins(data, ["scan_id", "vulns"])
+    
+    def is_flat_results_openvas(self, data):
+        return isinstance(data, dict) and self.get_key_cins(data, ["results"])
     # -------------------------------------------------------------------------------
     
     # Normalizers
@@ -246,17 +332,40 @@ class OpenVASParser(BaseParser):
         else:
             return "Low"
         
-    def parse_cvss_score(self, tags_str: str) -> float:
-        if not tags_str:
+    def parse_cvss_score(self, tags: Union[str, List[str], None]) -> float:
+        '''
+        Parses cvss_base_score from OpenVAS tags.
+        
+        Args:
+            tags: Either a semicolon-delimited string, list of strings, or none.
+            
+        Returns:
+            CVSS Base score as a float. Defaults to 0.0 if parsing fails or not found.
+        '''
+        if not tags:
             return 0.0
         
-        for pair in tags_str.split(";"):
+        # If it's a string, split into a list by semicolon.
+        if isinstance(tags, str):
+            pairs = tags.split(";")
+        elif isinstance(tags, list):
+            pairs = tags
+        else:
+            log.log.print_warning(f"[parse_cvss_score] Unexpected type for tags: {type(tags)}")
+            return 0.0
+        
+        
+        for pair in pairs:
+            if not isinstance(pair, str):
+                continue
+            
+            
             if pair.startswith("cvss_base_score="):
                 _, val = pair.split('=', 1)
                 try:
                     return float(val)
                 except ValueError:
-                    log.log.print_error(f"Value Error occured.")
+                    log.log.print_error(f"[parse_cvss_score] Value Error occured while converting {val}")
                     log.log.logger.exception("ValueError Exception")
                     return 0.0
 
@@ -276,7 +385,7 @@ class OpenVASParser(BaseParser):
         
     def convert_cves_str_list(self, cvestype):
         if isinstance(cvestype, str):
-            cvestype = coerce_list([c.strip() for c in cvestype.split(",")])
+            cvestype = coerce_list([c.strip() for c in re.split(r'[;|,]', cvestype) if cvestype.strip()])
             return cvestype
         elif isinstance(cvestype, list):
             return list(cvestype)
@@ -306,4 +415,33 @@ class OpenVASParser(BaseParser):
         hashed_fb = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()[:12]
         
         return str(hashed_fb)
+    
+    def detect_nested_key(self, data: Any, target_key: str) -> Any:
+        '''
+        Recursively check if a nested key exists anywhere in dictionary.
+        
+        Args:
+            data: The dict to search
+            target_key: The key to look for.
+            
+        Returns:
+            Value associated with the target_key if found, else None.
+        '''
+        if isinstance(data, dict):
+            
+            for key, value in data.items():
+                if key == target_key:
+                    log.log.logger.debug(f"[detect_nested_key]Nested Key: {target_key} Found")
+                    return data
+                result = self.detect_nested_key(value, target_key)
+                if result:
+                    return result
+                
+        elif isinstance(data, list):
+            for item in data:
+                result = self.detect_nested_key(item, target_key)
+                if result:
+                    return result
+                
+        return None
             

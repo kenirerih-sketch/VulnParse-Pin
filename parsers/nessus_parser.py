@@ -1,5 +1,6 @@
 
 from datetime import timezone
+from operator import itemgetter
 from typing import Any, Dict, List, Optional
 import ipaddress
 from classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
@@ -20,13 +21,23 @@ class NessusParser(BaseParser):
             lambda d: "scan" in d and isinstance(d["scan"].get("hosts"), list) and any("vulnerabilities" in h for h in d["scan"]["hosts"]),
             
             # Pattern 2: Generic 'results' list
-            lambda d: "results" in d and isinstance(d["results"], list),
+            lambda d: "results" in d and any(
+                isinstance(item, dict) and (
+                    "plugin_name" in item or
+                    "plugin_id" in item
+                    ) for item in d.get("results", [])
+                ),
             
             # Pattern 3: Check for top-level 'assets'
             lambda d: "assets" in d and isinstance(d["assets"], list),
             
             # Pattern 4: Flat list structure (some custom JSONs)
-            lambda d: isinstance(d, list)
+            lambda d: isinstance(d, list) and any(
+                isinstance(item, dict) and (
+                    "plugin_id" in item or
+                    "plugin_name" in item
+                ) for item in d
+            )
         ]
         
         for pattern in detection_patterns:

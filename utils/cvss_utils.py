@@ -9,7 +9,8 @@ except ImportError:
     CVSS3 = None #Fallback if module isn't installed
     
     
-CVSS3_REGEX = r'^CVSS:3\.[0-1]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]$'
+CVSS3_REGEX = r'^\bCVSS:3\.[0-1]/[A-Za-z]+:[A-Z]+/AC:[A-Z]+/PR:[A-Z]+/UI:[A-Z]+/S:[A-Z]+/C:[A-Z]+/I:[A-Z]+/A:[A-Z]+\b$'
+CVSS3_REGEX_L = r'CVSS:3\.[0-1]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]'
 
 def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     '''
@@ -25,7 +26,8 @@ def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     if vector is None:
         return False
     pattern = re.compile(CVSS3_REGEX)
-    return bool(pattern.match(vector))
+    match = pattern.match(vector)
+    return bool(match)
 
 
 def parse_cvss_vector(vector: str):
@@ -39,6 +41,7 @@ def parse_cvss_vector(vector: str):
         dict or None: Dictionary of CVSS score or None if invalid or supported.
     '''
     if not is_valid_cvss_vector(vector):
+        log.log.print_warning(f"[cvss_util] Invalid CVSS Vector: {vector}")
         return None
     
     if CVSS3 is None:

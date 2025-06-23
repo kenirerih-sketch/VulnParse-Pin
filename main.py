@@ -128,7 +128,7 @@ def get_args():
     )
     parser.add_argument("--file", "-f", help="Path to vulnerability scan file", required=True, type=valid_input_file)
     parser.add_argument("--enrich-kev", nargs="?", const="https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json", help="Path/URL to CISA KEV JSON or JSON.gz file. If omitted, uses official CISA KEV feed.")
-    parser.add_argument("--enrich-epss", nargs="?", const="https://epss.cyentia.com/epss_scores-current.csv.gz", help="Path/URL to EPSS CSV or CSV.gz file. If omitted, use official EPSS feed.")
+    parser.add_argument("--enrich-epss", nargs="?", const="https://epss.empiricalsecurity.com/epss_scores-current.csv.gz", help="Path/URL to EPSS CSV or CSV.gz file. If omitted, use official EPSS feed.")
     parser.add_argument("--output", "-o", metavar="FILE", help="File to output results to. Default is JSON")
     parser.add_argument("--pretty-print", "-pp", action="store_true", help="Output the JSON results with identation for readability to cli")
     parser.add_argument("--log-file", default="vulnparse_pin.log", help="Log File destination.")
@@ -242,7 +242,8 @@ def main():
         log.log.print_info("Displaying results to console...")
         print(json.dumps(asdict(scan_result), indent=4))
         
-    print_summary_banner(scan_result, args.output if args.output else None)
+    if args.enrich_kev or args.enrich_epss:
+        print_summary_banner(scan_result, args.output if args.output else None)
 
                 
             
