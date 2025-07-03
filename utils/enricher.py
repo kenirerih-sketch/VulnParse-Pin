@@ -10,13 +10,13 @@ import os
 import json
 import re
 
-from .cvss_utils import CVSS3_REGEX, CVSS3_REGEX_L, is_valid_cvss_vector, parse_cvss_vector
-from classes.dataclass import ScanResult
+from .cvss_utils import CVSS3_REGEX_L, is_valid_cvss_vector, parse_cvss_vector
+from classes.dataclass import ScanResult, TriageConfig
 from utils.triage_priority_helper import determine_triage_priority
 from .logger import *
 from . import logger_instance as log
 
-
+triagecfg = TriageConfig()
 
 def get_epss_score(cves: List[str], epss_data: Dict[str, float]) -> float:
     # Let's return the highest EPSS score found for a list of CVES.
@@ -464,11 +464,12 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                 
             # Recalculate Triage Priority
             finding.triage_priority = determine_triage_priority(
-                finding.severity,
-                cvss,
-                epss,
-                finding.cisa_kev,
-                finding.exploit_available
+                raw_score=raw_risk_score,
+                severity=finding.severity,
+                epss_score=epss,
+                cisa_kev=finding.cisa_kev,
+                exploit_available=finding.exploit_available,
+                cfg=triagecfg
             )
             
             # Update enrichment flag

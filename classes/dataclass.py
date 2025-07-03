@@ -58,3 +58,10 @@ class ScanResult:
             "metadata": self.metadata.__dict__,
             "assets": {k: v.__dict__ for k, v in self.assets.items()}
         }
+        
+@dataclass
+class TriageConfig:
+    critical_score: float = 9.0 # CVSS >= this -> crit
+    high_epss_score: float = 0.7 # EPSS >= this + High sev -> crit
+    exploit_floor_score: float = 7.5 # Min raw score if exploit w/o CVSS
+    balanced: bool = True # Prof togg

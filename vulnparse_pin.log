@@ -1,0 +1,111 @@
+2025-07-03 12:58:49,185 - INFO - Starting up VulnParse-Pin...
+2025-07-03 12:58:49,185 - INFO - Loading file: .\tests\mock_nessus_report.json
+2025-07-03 12:58:49,211 - INFO - File Loaded: .\tests\mock_nessus_report.json
+2025-07-03 12:58:49,211 - INFO - Scanning JSON structure to determine the type of parser to use...
+2025-07-03 12:58:49,211 - INFO - Detected parser for JSON structure: [95mNessusParser[0m
+2025-07-03 12:58:49,211 - INFO - Detected 'scan' top-level key with 'hosts'. Extracting hosts list.
+2025-07-03 12:58:49,212 - INFO - [92m[Enrich-Exploit][0mLoading Exploit-DB data from [93mOFFLINE[0m source...
+2025-07-03 12:58:49,212 - INFO - [92m[Enrich-Exploit][0mLoading local exploit database from ./data/files_exploits.csv.
+2025-07-03 12:58:49,535 - INFO - [92m[Enrich-Exploit][0mLoaded 15354 CVE entries from exploit database.
+2025-07-03 12:58:49,535 - INFO - [92m[Enrich-Exploit][0mLoaded Exploit-DB data (15354 CVEs with exploits)
+2025-07-03 12:58:49,535 - INFO - Parsed 6 assets, 9 findings
+2025-07-03 12:58:49,535 - INFO - Loading CISA KEV data from [93mhttps://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json[0m
+2025-07-03 12:58:49,705 - INFO - Loaded CISA KEV data from [93mhttps://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json[0m
+2025-07-03 12:58:49,705 - INFO - Loading EPSS data from [93mhttps://epss.empiricalsecurity.com/epss_scores-current.csv.gz[0m
+2025-07-03 12:58:52,630 - INFO - Loaded EPSS data from [93mhttps://epss.empiricalsecurity.com/epss_scores-current.csv.gz[0m
+2025-07-03 12:58:52,630 - ERROR - Invalid CVSS vector format for 19506: None
+2025-07-03 12:58:52,631 - INFO - [91m[RiskCalc][0m 19506 Raw Risk Score: [91m0.0[0m
+2025-07-03 12:58:52,631 - INFO - [91m[RiskCalc][0m 19506 Final Risk Score: [91m0.0[0m | Triage Priority: [91mInformational[0m | 
+2025-07-03 12:58:52,631 - WARNING - [95m[Enrichment][0m No CISA KEV record for CVE-2017-1001000.
+2025-07-03 12:58:52,679 - INFO - [95m[Enrichment][0m CVE-2017-1001000 EPSS Score: 0.80371
+2025-07-03 12:58:52,680 - ERROR - Invalid CVSS vector format for 10018: None
+2025-07-03 12:58:52,680 - INFO - [91m[RiskCalc][0m 10018 Raw Risk Score: [91m9.5[0m
+2025-07-03 12:58:52,680 - INFO - [91m[RiskCalc][0m 10018 Final Risk Score: [91m9.5[0m | Triage Priority: [91mHigh[0m | 
+2025-07-03 12:58:52,680 - INFO - [95m[Enrichment][0m CVE-2020-0618 found in CISA KEV
+2025-07-03 12:58:52,689 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2020-0618
+2025-07-03 12:58:52,690 - INFO - [95m[Enrichment][0m CVE-2020-0618 EPSS Score: 0.94252
+2025-07-03 12:58:52,690 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H
+2025-07-03 12:58:52,690 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 46930...
+2025-07-03 12:58:52,690 - INFO - 46930 Base score from vector: 8.8
+2025-07-03 12:58:52,691 - WARNING - Score mismatch for 46930: vector 8.8 vs field: 9.8
+2025-07-03 12:58:52,691 - INFO - Overwriting cvss score with value from CVSS Vector: 8.8
+2025-07-03 12:58:52,691 - WARNING - [91m[RiskCalc][0m Risk Score for 46930 capped at 10.0 (Raw Score: [91m12.05[0m)
+2025-07-03 12:58:52,691 - INFO - [91m[RiskCalc][0m 46930 Final Risk Score: [91m10.0[0m | Triage Priority: [91mCritical+[0m | 
+2025-07-03 12:58:52,691 - INFO - [95m[Enrichment][0m CVE-2014-0160 found in CISA KEV
+2025-07-03 12:58:52,703 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2014-0160
+2025-07-03 12:58:52,704 - INFO - [95m[Enrichment][0m CVE-2014-0160 EPSS Score: 0.94468
+2025-07-03 12:58:52,704 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N
+2025-07-03 12:58:52,704 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 10802...
+2025-07-03 12:58:52,704 - INFO - 10802 Base score from vector: 7.5
+2025-07-03 12:58:52,705 - INFO - CVSS score for 10802 is consistent.
+2025-07-03 12:58:52,705 - WARNING - [91m[RiskCalc][0m Risk Score for 10802 capped at 10.0 (Raw Score: [91m10.75[0m)
+2025-07-03 12:58:52,705 - INFO - [91m[RiskCalc][0m 10802 Final Risk Score: [91m10.0[0m | Triage Priority: [91mHigh[0m | 
+2025-07-03 12:58:52,705 - INFO - [95m[Enrichment][0m CVE-2012-1823 found in CISA KEV
+2025-07-03 12:58:52,716 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2012-1823
+2025-07-03 12:58:52,716 - INFO - [95m[Enrichment][0m CVE-2012-1823 EPSS Score: 0.94386
+2025-07-03 12:58:52,716 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+2025-07-03 12:58:52,716 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 16455...
+2025-07-03 12:58:52,717 - INFO - 16455 Base score from vector: 9.8
+2025-07-03 12:58:52,717 - WARNING - Score mismatch for 16455: vector 9.8 vs field: 6.1
+2025-07-03 12:58:52,717 - INFO - Overwriting cvss score with value from CVSS Vector: 9.8
+2025-07-03 12:58:52,717 - WARNING - [91m[RiskCalc][0m Risk Score for 16455 capped at 10.0 (Raw Score: [91m13.05[0m)
+2025-07-03 12:58:52,717 - INFO - [91m[RiskCalc][0m 16455 Final Risk Score: [91m10.0[0m | Triage Priority: [91mCritical+[0m | 
+2025-07-03 12:58:52,718 - INFO - [95m[Enrichment][0m CVE-2018-0171 found in CISA KEV
+2025-07-03 12:58:52,727 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2018-0171
+2025-07-03 12:58:52,727 - INFO - [95m[Enrichment][0m CVE-2018-0171 EPSS Score: 0.91351
+2025-07-03 12:58:52,727 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+2025-07-03 12:58:52,728 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 38855...
+2025-07-03 12:58:52,728 - INFO - 38855 Base score from vector: 9.8
+2025-07-03 12:58:52,728 - WARNING - Score mismatch for 38855: vector 9.8 vs field: 7.5
+2025-07-03 12:58:52,728 - INFO - Overwriting cvss score with value from CVSS Vector: 9.8
+2025-07-03 12:58:52,728 - WARNING - [91m[RiskCalc][0m Risk Score for 38855 capped at 10.0 (Raw Score: [91m13.05[0m)
+2025-07-03 12:58:52,729 - INFO - [91m[RiskCalc][0m 38855 Final Risk Score: [91m10.0[0m | Triage Priority: [91mCritical+[0m | 
+2025-07-03 12:58:52,729 - INFO - [95m[Enrichment][0m CVE-2017-0144 found in CISA KEV
+2025-07-03 12:58:52,739 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2017-0144
+2025-07-03 12:58:52,740 - INFO - [95m[Enrichment][0m CVE-2017-0144 EPSS Score: 0.94306
+2025-07-03 12:58:52,740 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H
+2025-07-03 12:58:52,740 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 11219...
+2025-07-03 12:58:52,740 - INFO - 11219 Base score from vector: 8.8
+2025-07-03 12:58:52,740 - WARNING - Score mismatch for 11219: vector 8.8 vs field: 8.1
+2025-07-03 12:58:52,741 - INFO - Overwriting cvss score with value from CVSS Vector: 8.8
+2025-07-03 12:58:52,741 - WARNING - [91m[RiskCalc][0m Risk Score for 11219 capped at 10.0 (Raw Score: [91m12.05[0m)
+2025-07-03 12:58:52,741 - INFO - [91m[RiskCalc][0m 11219 Final Risk Score: [91m10.0[0m | Triage Priority: [91mCritical+[0m | 
+2025-07-03 12:58:52,741 - WARNING - [95m[Enrichment][0m No CISA KEV record for CVE-2020-9715.
+2025-07-03 12:58:52,750 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2020-9715
+2025-07-03 12:58:52,750 - INFO - [95m[Enrichment][0m CVE-2020-9715 EPSS Score: 0.56205
+2025-07-03 12:58:52,750 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H
+2025-07-03 12:58:52,750 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 10572...
+2025-07-03 12:58:52,750 - INFO - 10572 Base score from vector: 7.8
+2025-07-03 12:58:52,750 - WARNING - Score mismatch for 10572: vector 7.8 vs field: 6.8
+2025-07-03 12:58:52,751 - INFO - Overwriting cvss score with value from CVSS Vector: 7.8
+2025-07-03 12:58:52,751 - INFO - [91m[RiskCalc][0m 10572 Raw Risk Score: [91m7.8[0m
+2025-07-03 12:58:52,751 - INFO - [91m[RiskCalc][0m 10572 Final Risk Score: [91m7.8[0m | Triage Priority: [91mMedium[0m | 
+2025-07-03 12:58:52,751 - WARNING - [95m[Enrichment][0m No CISA KEV record for CVE-2018-15473.
+2025-07-03 12:58:52,772 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for cve: CVE-2018-15473
+2025-07-03 12:58:52,773 - INFO - [95m[Enrichment][0m CVE-2018-15473 EPSS Score: 0.91054
+2025-07-03 12:58:52,773 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N
+2025-07-03 12:58:52,773 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for 80503...
+2025-07-03 12:58:52,773 - INFO - 80503 Base score from vector: 5.3
+2025-07-03 12:58:52,773 - INFO - CVSS score for 80503 is consistent.
+2025-07-03 12:58:52,774 - INFO - [91m[RiskCalc][0m 80503 Raw Risk Score: [91m7.3[0m
+2025-07-03 12:58:52,774 - INFO - [91m[RiskCalc][0m 80503 Final Risk Score: [91m7.3[0m | Triage Priority: [91mMedium[0m | 
+2025-07-03 12:58:52,774 - INFO -    Total CVEs Processed : 8
+2025-07-03 12:58:52,774 - INFO -    Total CISA KEV Hits : 5
+2025-07-03 12:58:52,774 - INFO -    Total CVSS Vectors Assigned : 7
+2025-07-03 12:58:52,775 - INFO -    Total CVSS Vectors Validated : 7
+2025-07-03 12:58:52,775 - INFO -    Total EPSS Misses : 0
+2025-07-03 12:58:52,775 - INFO -    Total Findings Rx Baseline Risk Adjustment: 0
+2025-07-03 12:58:52,776 - INFO - Enrichments Applied
+2025-07-03 12:58:52,776 - WARNING - [92m[Enrich-Exploit][0mNo CVEs present for Nessus Scan Information, skipping exploit check.
+2025-07-03 12:58:52,776 - WARNING - No exploits found for CVE WordPress Directory Traversal (CVE-2017-1001000)
+2025-07-03 12:58:52,776 - INFO - [92m[Enrich-Exploit][0mExploit(s) found for Microsoft SQL Server RCE (CVE-2020-0618)
+2025-07-03 12:58:52,776 - WARNING - No exploits found for CVE Apache Httpd mod_ssl Heartbleed (CVE-2014-0160)
+2025-07-03 12:58:52,776 - WARNING - No exploits found for CVE PHP CGI Arg Injection (CVE-2012-1823)
+2025-07-03 12:58:52,776 - INFO - [92m[Enrich-Exploit][0mExploit(s) found for Cisco IOS Path Traversal (CVE-2018-0171)
+2025-07-03 12:58:52,777 - INFO - [92m[Enrich-Exploit][0mExploit(s) found for MS Windows SMBv1 Remote Code Execution (CVE-2017-0144)
+2025-07-03 12:58:52,777 - WARNING - No exploits found for CVE Adobe Flash Player Use-After-Free (CVE-2020-9715)
+2025-07-03 12:58:52,777 - INFO - [92m[Enrich-Exploit][0mExploit(s) found for OpenSSH Username Enumeration (CVE-2018-15473)
+2025-07-03 12:58:52,777 - INFO - [92m[Enrich-Exploit][0mExploit enrichment applied to findings.
+2025-07-03 12:58:52,777 - INFO - Pretty-printing JSON - Standby...
+2025-07-03 12:58:52,778 - INFO - Parsed results are stored in: test.json
+2025-07-03 12:58:52,780 - INFO - Assets Analyzed: 6,Findings Triaged: 9,Average Risk Score: 8.49,Highest Risk Asset: dbserver-01.example.com,Critical+: 4, High: 2, Medium: 2, Low: 0
