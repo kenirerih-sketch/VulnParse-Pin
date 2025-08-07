@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, timezone
 import hashlib
+from json_parser import detect_and_transform_flat_json
 from utils.cvss_utils import is_valid_cvss_vector
 import utils.logger_instance as log
 from typing import Any, Counter, Dict, List, Optional, Union
@@ -16,16 +17,28 @@ class OpenVASParser(BaseParser):
             lambda d: "report" in d and isinstance(d["report"].get("results"), list),
             
             # Pattern 2: Check for flat openvas schema. 'scan_id' and 'vulns'[] key
-            lambda d: isinstance(d, dict) and self.get_key_cins(data, ["scan_id", "vulns"]),
+            lambda d: isinstance(d, dict) and self.get_key_cins(d, ["scan_id", "vulns"]),
             
             # Pattern 3: Check for flat 'results' key with list of findings.
             lambda d: "results" in d and any(
                 isinstance(item, dict) and (
                     "cvss_base_vector" in item or
-                    "qod" in item or
+                    "oid" in item or
                     "affected_hosts" in item
                 ) for item in d.get("results", [])
-            )
+            ),
+            
+            # Pattern 4: Check for Report object with all data in a "results" dictionary nested in a "result" list of dictionaries. GVM CLI Export format
+            lambda d: "report" in d and isinstance(d["report"].get("results", {}).get("result", []), list),
+            
+            # Pattern 5: Check for flat list of data with 'nvt' key.
+            lambda d: isinstance(d, list) and "nvt" in d[0],
+            
+            # Pattern 6: GSA Web UI Export format
+            lambda d: "results" in d and "nvt" in d["results"][0],
+            
+            # Pattern 7: OMP API Export format
+            lambda d: "scan" in d and ("results" in d["scan"] and isinstance(d["scan"]["results"], list))
         ]
         
         for pattern in detection_patterns:
@@ -90,10 +103,10 @@ class OpenVASParser(BaseParser):
             if tags:
                 cvss_score = self.parse_cvss_score(tags)
             
-            if not cvss_score:
-                coerce_float(self.get_key_cins(item.get("nvt", {}), ["cvss_base", "cvss", "cvss_score", "cvss_base_score"], default=0.0))
-            else:
-                cvss_score = 0.0
+            if not isinstance(cvss_score, (int, float)) or cvss_score == 0.0:
+                fallback_cvss = self.get_key_cins(item.get("nvt", {}), ["cvss_base", "cvss", "cvss_score", "cvss_base_score"], default=0.0)
+                cvss_score = coerce_float(fallback_cvss, default=0.0)
+                
             cvss_vector = coerce_str(self.get_key_cins(item.get("nvt", {}), ["cvss_base_vector", "cvss_vector"], default="N/A"))
             if not is_valid_cvss_vector(cvss_vector):
                 cvss_vector = "Unknown"
@@ -217,7 +230,19 @@ class OpenVASParser(BaseParser):
             else:
                 log.log.print_error("vulns list is empty. Unable to transform schema.")
                 
-        elif isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
+        elif (
+            isinstance(data, dict)
+            and "results" in data
+            and isinstance(data["results"], list)
+            and all(
+                isinstance(entry, dict)
+                and not isinstance(entry.get("nvt"), dict)
+                and "host" in entry
+                and "port" in entry
+                and "plugin_name" in entry
+                for entry in data["results"][:5]
+            )
+        ):
             log.log.print_info(f"Detected OpenVAS JSON with flat results list")
             
             results = []
@@ -271,6 +296,42 @@ class OpenVASParser(BaseParser):
                         "results": results
                     }
                 }
+        # If Flat list with nvt key
+        elif isinstance(data, list) and "nvt" in data[0]:
+            log.log.print_info(f"Detected flat list with 'nvt' key.")
+            
+            results = []
+            
+            for host in data:
+                if not isinstance(host, dict):
+                    continue
+                # Loop through each 'finding' entry in the flat list
+                
+                severity = host.get("severity", "N/A")
+                if str(severity).isdigit():
+                    severity = self.convert_sev_num(severity)
+                
+                result_item = {
+                    "host": self.get_key_cins(host, ["host", "hostname", "host-id", "host_name", "host-name"], default="N/A"),
+                    "ip": self.get_key_cins(host, ["ip", "ip_address", "host-ip", "ip-address"], default="N/A"),
+                    "port": host.get("port", "N/A"),
+                    "description": self.get_key_cins(host, ["description"], default="N/A"),
+                    "severity": severity,
+                    "nvt": self.parse_nvt(host.get("nvt", {}))
+                }
+                results.append(result_item)
+                
+            if not isinstance(results, list):
+                raise ValueError("[FlatJSONTransform] Transformation failed, var: 'results' is not a list.")
+            return {
+                "report": {
+                    "scan_start": data[0].get("scan_start", "N/A") if isinstance(data[0], dict) else "N/A",
+                    "scan_end": data[0].get("scan_end", "N/A") if isinstance(data[0], dict) else "N/A",
+                    "results": results,
+                    "schema_version": "native_flat_list"
+                }
+            }
+                
         else:
             log.log.print_warning("Unknown dict formation - returning as-is.")
             return data
@@ -296,20 +357,85 @@ class OpenVASParser(BaseParser):
             transformed = self.detect_and_transform_flat_json(data)
             return self.normalize_openvas_standard(transformed)
         
+        elif self.is_gvm_cli_format(data):
+            return self.normalize_gvm_cli_format(data)
+        
+        elif self.is_flat_list_nvt(data):
+            transformed = detect_and_transform_flat_json(data)
+            return self.normalize_openvas_standard(transformed)
+        
+        elif self.is_gsa_web_ui_format(data):
+            transformed = self.normalize_gsa_web_ui_format(data)
+            return self.normalize_openvas_standard(transformed)
+        
+        elif self.is_omp_api_format(data):
+            transformed = self.normalize_omp_api_format(data)
+            return self.normalize_openvas_standard(transformed)
+        
         else:
             raise ValueError("Unknown or unsupported OpenVAS data structure for normalization.")
             
     # -----------------------------------------------------------------------------------        
             
     # Schema Detectors
-    def is_openvas_standard(self, data):
+    def is_openvas_standard(self, data) -> bool:
         return isinstance(data, dict) and "report" in data and isinstance(data["report"].get("results"), list)
     
-    def is_flat_openvas(self, data):
-        return isinstance(data, dict) and self.get_key_cins(data, ["scan_id", "vulns"])
+    def is_flat_openvas(self, data) -> bool:
+        """
+        Detects a CLI-style flat OpenVAS structure where 'scan_id' and 'vulns' are present, and there are no nested result structures (e.g., no 'nvt' dicts)
+        """
+        return (
+            isinstance(data, dict)
+            and "scan_id" in data
+            and "vulns" in data
+            and isinstance(data["vulns", list])
+            and all(
+                isinstance(v, dict)
+                and "plugin_name" in v
+                and not isinstance(v.get("nvt"), dict)
+                for v in data["vulns"][:5]
+            )
+        )
     
-    def is_flat_results_openvas(self, data):
-        return isinstance(data, dict) and self.get_key_cins(data, ["results"])
+    def is_flat_results_openvas(self, data) -> bool:
+        return (
+            isinstance(data, dict)
+            and "results" in data
+            and isinstance(data["results"], list)
+            and all(
+                isinstance(entry, dict)
+                and "host" in entry
+                and "port" in entry
+                and "plugin_name" in entry
+                and not isinstance(entry.get("nvt"), dict)
+                for entry in data["results"][:5]
+            )
+        )
+    
+    def is_gvm_cli_format(self, data) -> bool:
+        return "report" in data and isinstance(data["report"].get("results", {}).get("result", []), list)
+    
+    def is_flat_list_nvt(self, data) -> bool:
+        return isinstance(data, list) and "nvt" in data[0]
+    
+    def is_gsa_web_ui_format(self, data) -> bool:
+        if not isinstance(data, dict):
+            return False
+        
+        if "results" in data and isinstance(data["results"], list):
+            for result in data["results"]:
+                if isinstance(result, dict):
+                    if "nvt" in result and isinstance(result["nvt"], dict):
+                        if "tags" in result["nvt"] and "name" in result["nvt"]:
+                            print("gsa DETECTED")
+                            return True
+                    
+        return False
+    
+    def is_omp_api_format(self, data) -> bool:
+        return "scan" in data and ("results" in data["scan"] and isinstance(data["scan"]["results"], list))
+        
     # -------------------------------------------------------------------------------
     
     # Normalizers
@@ -321,7 +447,110 @@ class OpenVASParser(BaseParser):
         
         return metadata[0], report
     
+    def normalize_gvm_cli_format(self, data):
+        print("[DEBUG] GVM_CLI IS RUNNING")
+        report = data["report"]
+        scan_start = data["report"].get("scan_start", "N/A")
+        scan_end = data["report"].get("scan_end", "N/A")
+        metadata = (scan_start, scan_end)
+        
+        return metadata[0], report
+    
+    def normalize_gsa_web_ui_format(self, data):
+        results = []
+        
+        scan_start = "N/A"
+        scan_end = "N/A"
+        
+        metadata = (scan_start, scan_end)
+        
+        hosts = data.get("results", [])
+        
+        for host in hosts:
+            if not isinstance(host, dict):
+                log.log.logger.warning(f"[Normalizer_GSA_WEB_UI] Host entry is not a dictionary... Skipping")
+                continue
+            
+            severity = host.get("severity", "N/A")
+            if str(severity).isdigit():
+                severity = self.convert_sev_num(severity)
+            
+            result_item = {
+                "host": self.get_key_cins(host, ["host", "hostname", "host-id", "host_name", "host-name"], default="N/A"),
+                "ip": self.get_key_cins(host, ["ip", "ip_address", "host-ip", "ip-address"], default="N/A"),
+                "port": host.get("port", "N/A"),
+                "description": self.get_key_cins(host, ["description"], default="N/A"),
+                "severity": severity,
+                "nvt": self.parse_nvt(host.get("nvt", {}))
+            }
+            results.append(result_item)
+        
+        report = {
+            "report": {
+                "scan_start": scan_start,
+                "scan_end": scan_end,
+                "results": results,
+                "schema_version": "gsa_web_ui"
+            }
+        }
+        
+        return report
+            
+    
+    def normalize_omp_api_format(self, data):
+        scan_start = data.get("scan", {}).get("info", {}).get("start_time", "N/A")
+        scan_end = data.get("scan", {}).get("info", {}).get("end_time", "N/A")
+        metadata = (scan_start, scan_end)
+        
+        results = []
+        
+        hosts = data.get("scan", {}).get("results", [])
+        
+        if isinstance(hosts, dict):
+            hosts = [hosts]
+        
+        elif not isinstance(hosts, list):
+            log.log.logger.warning("[OMPNormalizer] Malformed results structure. Skipping...")
+            return metadata[0], {
+                "report": {
+                    "scan_start": scan_start,
+                    "scan_end": scan_end,
+                    "results": [],
+                    "schema_version": "omp_api"
+                }
+            }
+            
+        for host in hosts:
+            severity = host.get("severity", "N/A")
+            if str(severity).isdigit():
+                severity = self.convert_sev_num(severity)
+                
+            result_item = {
+                "host": self.get_key_cins(host, ["host", "hostname", "host-id", "host_name", "host-name"], default="N/A"),
+                "ip": self.get_key_cins(host, ["ip", "ip_address", "host-ip", "ip-address"], default="N/A"),
+                "port": host.get("port", "N/A"),
+                "description": self.get_key_cins(host, ["description"], default="N/A"),
+                "severity": severity,
+                "nvt": self.parse_nvt(host.get("nvt", {}))
+            }
+            results.append(result_item)
+        
+        report = {
+            "report": {
+                "scan_start": scan_start,
+                "scan_end": scan_end,
+                "results": results,
+                "schema_version": "omp"
+            }
+        }
+        
+        return report
+        
+        
+    
     # -------------------------------------------------------------------------------------
+    
+    # Helper Functions
     
     def determine_asset_criticality(self, severity_counter: Counter) -> str:
         crit_count: int = severity_counter["Critical"]
@@ -449,3 +678,37 @@ class OpenVASParser(BaseParser):
                 
         return None
             
+    def parse_nvt(self, nvt_dict: dict) -> dict:
+        
+        cve_raw = self.get_key_cins(nvt_dict, ["cve", "cves"], default=None)
+        cvss_vector = self.get_key_cins(nvt_dict, ["cvss_base_vector", "cvss_vector"], default=None)
+        cvss_base = self.get_key_cins(nvt_dict, ["cvss_base", "cvss_base_score", "cvss_score"], default="N/A")
+        tags = self.get_key_cins(nvt_dict, ["tags", "tag"], default="N/A")
+        name = self.get_key_cins(nvt_dict, ["title", "name"], default="N/A")
+        
+        # Parse
+        if (not cve_raw or cve_raw in ["N/A", ""]):
+            cve_raw = self.extract_tag_value(tags, "cve")
+            
+        if (not cvss_vector or cvss_vector in ["N/A", ""]):
+            cvss_vector = self.extract_tag_value(tags, f"cvss_base_vector")
+        
+        return {
+        "name": name,
+        "cvss_base": cvss_base,
+        "cvss_vector": cvss_vector,
+        "cve": cve_raw,
+        "tags": tags
+        }
+        
+    def extract_tag_value(self, tag_string: str, key: str) -> str:
+        if not tag_string:
+            return "N/A"
+        
+        for tag in tag_string.split(';'):
+            if "=" in tag:
+                k, v = tag.strip().split("=", 1)
+                if k.strip().lower() == key.lower():
+                    return v.strip()
+        return "N/A"
+        

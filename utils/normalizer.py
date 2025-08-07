@@ -147,7 +147,12 @@ def coerce_severity(value: str, default: Optional[str] = "Low") -> Optional[str]
         "info": "Info",
         "informational": "Informational",
         "none": "None",
-        "unknown": "Unknown"
+        "unknown": "Unknown",
+        "1": "Informational",
+        "2": "Low",
+        "3": "Medium",
+        "4": "High",
+        "5": "Critical"
     }
     try:
         normalized = str(value).strip().lower()
