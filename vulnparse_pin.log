@@ -709,3 +709,52 @@
 2025-07-29 23:01:31,365 - INFO - Enrichments Applied
 2025-07-29 23:01:31,365 - INFO - Displaying results to console...
 2025-07-29 23:01:31,368 - INFO - Assets Analyzed: 2,Findings Triaged: 2,Average Risk Score: 7.1,Highest Risk Asset: webserver-01.example.com,Critical+: 0, High: 0, Medium: 2, Low: 0
+2025-09-02 16:55:37,581 - INFO - Starting up VulnParse-Pin...
+2025-09-02 16:55:37,581 - INFO - Loading file: .\tests_output\gvm_cli_std.json
+2025-09-02 16:55:37,594 - INFO - File loaded: .\tests_output\gvm_cli_std.json
+2025-09-02 16:55:37,595 - INFO - Scanning JSON structure to determine the type of parser to use...
+2025-09-02 16:55:37,595 - INFO - Detected parser for JSON structure: [95mOpenVASParser[0m
+2025-09-02 16:55:37,595 - INFO - [92m[Enrich-Exploit][0mLoading Exploit-DB data from [93mOFFLINE[0m source...
+2025-09-02 16:55:37,596 - INFO - [92m[Enrich-Exploit][0mLoading local exploit database from ./data/files_exploits.csv.
+2025-09-02 16:55:37,910 - INFO - [92m[Enrich-Exploit][0mLoaded 15354 CVE entries from exploit database.
+2025-09-02 16:55:37,910 - INFO - [92m[Enrich-Exploit][0mLoaded Exploit-DB data (15354 CVEs with exploits)
+2025-09-02 16:55:37,911 - INFO - Parsed 2 assets, 2 findings
+2025-09-02 16:55:37,911 - INFO - Loading CISA KEV data from [93mhttps://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json[0m
+2025-09-02 16:55:38,053 - INFO - Loaded CISA KEV data from [93mhttps://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json[0m
+2025-09-02 16:55:38,053 - INFO - Loading EPSS data from [93mhttps://epss.empiricalsecurity.com/epss_scores-current.csv.gz[0m
+2025-09-02 16:55:40,795 - INFO - Loaded EPSS data from [93mhttps://epss.empiricalsecurity.com/epss_scores-current.csv.gz[0m
+2025-09-02 16:55:40,795 - WARNING - No exploits found for CVE SSL Certificate Expiry Check (CVE-2021-1234)
+2025-09-02 16:55:40,795 - WARNING - No exploits found for CVE OpenSSH Detection (CVE-2020-5678)
+2025-09-02 16:55:40,795 - INFO - [92m[Enrich-Exploit][0mExploit enrichment applied to findings.
+2025-09-02 16:55:40,796 - WARNING - [95m[Enrichment][0m No CISA KEV record for CVE-2021-1234.
+2025-09-02 16:55:40,835 - INFO - [CVSSVector] Using SECONDARY vector for CVE-2021-1234
+2025-09-02 16:55:40,835 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for CVE-2021-1234
+2025-09-02 16:55:40,836 - INFO - [95m[Enrichment][0m CVE-2021-1234 EPSS Score: 0.00095
+2025-09-02 16:55:40,836 - INFO - [95m[Enrichment][0m Authoritative CVE: CVE-2021-1234 => EPSS=0.00095 | KEV=False | Exploit=False
+2025-09-02 16:55:40,836 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N
+2025-09-02 16:55:40,837 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for CVE-2021-1234...
+2025-09-02 16:55:40,837 - INFO - CVE-2021-1234 Base score from vector: 5.3
+2025-09-02 16:55:40,837 - INFO - CVSS score for CVE-2021-1234 is consistent.
+2025-09-02 16:55:40,837 - INFO - [91m[RiskCalc][0m CVE-2021-1234 Raw Risk Score: [91m5.3[0m
+2025-09-02 16:55:40,837 - INFO - [91m[RiskCalc][0m CVE-2021-1234 Final Risk Score: [91m5.3[0m | Triage Priority: [91mMedium[0m | 
+2025-09-02 16:55:40,838 - WARNING - [95m[Enrichment][0m No CISA KEV record for CVE-2020-5678.
+2025-09-02 16:55:40,866 - INFO - [CVSSVector] Using PRIMARY vector for CVE-2020-5678
+2025-09-02 16:55:40,866 - INFO - [95m[NVDData][0m CVSS Vector Found in NVD Data for CVE-2020-5678
+2025-09-02 16:55:40,866 - INFO - [95m[Enrichment][0m CVE-2020-5678 EPSS Score: 0.00419
+2025-09-02 16:55:40,866 - INFO - [95m[Enrichment][0m Authoritative CVE: CVE-2020-5678 => EPSS=0.00419 | KEV=False | Exploit=False
+2025-09-02 16:55:40,866 - INFO - [95m[CVSSVector][0m Assigned CVSS Vector: CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N
+2025-09-02 16:55:40,867 - INFO - [95m[CVSSVector][0m Validating and reconciling CVSS Vector for CVE-2020-5678...
+2025-09-02 16:55:40,867 - INFO - CVE-2020-5678 Base score from vector: 6.1
+2025-09-02 16:55:40,867 - WARNING - Score mismatch for CVE-2020-5678: vector 6.1 vs field: 6.5
+2025-09-02 16:55:40,867 - INFO - Overwriting cvss score with value from CVSS Vector: 6.1
+2025-09-02 16:55:40,867 - INFO - [91m[RiskCalc][0m CVE-2020-5678 Raw Risk Score: [91m6.1[0m
+2025-09-02 16:55:40,868 - INFO - [91m[RiskCalc][0m CVE-2020-5678 Final Risk Score: [91m6.1[0m | Triage Priority: [91mMedium[0m | 
+2025-09-02 16:55:40,868 - INFO -    Total CVEs Processed : 2
+2025-09-02 16:55:40,868 - INFO -    Total CISA KEV Hits : 0
+2025-09-02 16:55:40,868 - INFO -    Total CVSS Vectors Assigned : 2
+2025-09-02 16:55:40,868 - INFO -    Total CVSS Vectors Validated : 2
+2025-09-02 16:55:40,869 - INFO -    Total EPSS Misses : 0
+2025-09-02 16:55:40,869 - INFO -    Total Findings Rx Baseline Risk Adjustment: 0
+2025-09-02 16:55:40,870 - INFO - Enrichments Applied
+2025-09-02 16:55:40,870 - INFO - Displaying results to console...
+2025-09-02 16:55:40,873 - INFO - Assets Analyzed: 2,Findings Triaged: 2,Average Risk Score: 5.7,Highest Risk Asset: 10.0.0.2,Critical+: 0, High: 0, Medium: 2, Low: 0

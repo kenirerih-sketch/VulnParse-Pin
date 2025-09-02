@@ -54,7 +54,7 @@ def setup_logging():
                 "cve": "CVE-2020-5555"
             }]
         }
-    }, "NVT Plugin Name", "N/A"),
+    }, "NVT Plugin Name", "Unknown"),
 
     # Fallback title and description when everything is missing
     ({
@@ -65,7 +65,7 @@ def setup_logging():
                 "cve": "CVE-2023-0001"
             }]
         }
-    }, "N/A", "N/A")
+    }, "N/A", "Unknown")
 ])
 def test_plugin_title_description_fallbacks(input_json, expected_title, expected_description):
     parser = OpenVASParser()

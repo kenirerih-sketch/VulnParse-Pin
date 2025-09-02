@@ -26,7 +26,7 @@ def setup_logging():
         "vuln_id": "CVE-2022-1111",
         "severity": "Unknown",
         "cvss_score": 0.0,
-        "description": "N/A"
+        "description": "Unknown"
     }),
 
     # Plugin with invalid CVSS base string

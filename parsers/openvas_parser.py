@@ -645,7 +645,7 @@ class OpenVASParser(BaseParser):
         
         hashed_fb = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()[:12]
         
-        return f"unknown_(hashed_fb)"
+        return f"unknown_{hashed_fb}"
     
     def detect_nested_key(self, data: Any, target_key: str) -> Any:
         '''
