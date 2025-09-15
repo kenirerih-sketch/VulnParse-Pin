@@ -15,14 +15,23 @@ from parsers.__init__ import *
 from utils.exploit_enrichment_service import *
 from utils.validations import *
 from utils.nvdcacher import NVDCache
+from utils.enrichment_stats import stats
+from utils.config_loader import load_config
 
-def print_summary_banner(scan_result, output_file=None):
+def print_summary_banner(scan_result, output_file=None, sources=None):
     '''
     Prints a formatted summary banner with key metrics from the scan result.
     
     Args:
         scan_result (ScanResult): The final processed scan results.
         output_file (str, optional): The path to the output JSON file.
+        sources (dict, optional): Dict of enrichment source status, e.g.:
+            {
+                "exploitdb": True,
+                "kev": True,
+                "epss": True,
+                "nvd": "Enabled (feeds 2017-2025, modified)" # or "Disabled (--no-nvd)", "Offline (feeds missing)"
+            }
         
     Returns:
         None
@@ -55,30 +64,71 @@ def print_summary_banner(scan_result, output_file=None):
     )
     
     print("\n" + "="*60)
-    print("🛡️                  VulnParse-Pin Scan Summary             🛡️")
+    print("🛡️          VulnParse-Pin Scan Summary (v1.0-RC)          🛡️")
     print("="*60)
-    print(f" Total Assets Analyzed            : {total_assets}")
-    print(f" Total Findings Triaged           : {total_findings}")
-    print(f" Average Asset Risk Score         : {avg_risk_score}")
+    print(f" Total Assets Analyzed            : {total_assets:,}")
+    print(f" Total Findings Triaged           : {total_findings:,}")
+    print(f" Average Asset Risk Score         : {avg_risk_score:.2f}")
     if highest_risk_asset:
-        print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score})")
+        print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score:.2f})")
     else:
         print(" Highest Risk Asset: N/A")
-    print(f"💣 Findings with Known Exploits   : {exploit_findings}")
-    print(f"🔥 Critical+ Risk Findings        : {critical_findings}")
-    print(f"⚠️  High Risk Findings             : {high_findings}")
-    print(f"🟡 Medium Risk Findings           : {medium_findings}")
-    print(f"🟢 Low Risk Findings              : {low_findings}")
-    print(f"📊 Enriched Findings              : {enriched_findings}")
+    print("-" * 60)
+    print(f"💣 Findings with Known Exploits   : {exploit_findings:,}")
+    print(f"🔥 Critical+ Risk Findings        : {critical_findings:,}")
+    print(f"⚠️  High Risk Findings             : {high_findings:,}")
+    print(f"🟡 Medium Risk Findings           : {medium_findings:,}")
+    print(f"🟢 Low Risk Findings              : {low_findings:,}")
+    print("-" * 60)
+    print(f"📊 Enriched Findings              : {enriched_findings:,}")
     if output_file:
         print(f"📁 Output Location                : {output_file}")
+    
+    
+    # Enrichment source status
+    if sources:
+        src_line = "🔗 Enrichment Sources             : "
+        src_line += f"ExploitDB {'✅' if sources.get('exploitdb') else '❌'} | "
+        src_line += f"KEV {'✅' if sources.get('kev') else '❌'} | "
+        src_line += f"EPSS {'✅' if sources.get('epss') else '❌'} | "
+        nvd_status = sources.get("nvd", "❌")
+        src_line += f"NVD {nvd_status}"
+        print(src_line)
+        
+        stats = sources.get("stats", {})
+        if stats:
+            kev_hits = stats.get("kev_hits", 0)
+            kev_total = stats.get("kev_total", 0)
+            epss_hits = stats.get("epss_hits", 0)
+            epss_total = stats.get("epss_total", 0)
+            nvd_vectors = stats.get("nvd_vectors", 0)
+            nvd_validated = stats.get("nvd_validated", 0)
+            exploit_hits = stats.get("exploit_hits", 0)
+            
+            kev_pct = (kev_hits / kev_total * 100) if kev_total else 0.0
+            epss_pct = (epss_hits / epss_total * 100 if epss_total else 0.0)
+            
+            print(f"🔑    KEV Hits                    : {kev_hits:,}/{kev_total:,} ({kev_pct:.2f}%)")
+            print(f"📈    EPSS Coverage               : {epss_hits:,}/{epss_total:,} ({epss_pct:.2f}%)")
+            print(f"📊    NVD Vectors                 : {nvd_vectors:,} assigned, {nvd_validated:,} validated")
+            print(f"💣    Exploit-DB Hits             : {exploit_hits:,}")
+        
     print("="*60 + "\n")
+        
     log.log.logger.info(f"Assets Analyzed: {total_assets}," 
                 f"Findings Triaged: {total_findings}," 
                 f"Average Risk Score: {avg_risk_score},"
                 f"Highest Risk Asset: {highest_risk_asset.hostname if highest_risk_asset else 'N/A'},"
                 f"Critical+: {critical_findings}, High: {high_findings}, Medium: {medium_findings}, Low: {low_findings}"
                 )
+
+def format_runtime(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    secs = seconds % 60
+    if minutes > 0:
+        return f"{minutes}m {secs:.2f}s"
+    else:
+        return f"{secs:2f}s"
 
 def write_output(data, file_path, pretty_print=False):
     '''
@@ -143,6 +193,8 @@ def get_args():
     parser.add_argument("--enrich-exploit", "-ex", action="store_true", help="Enrich findings with exploit availability info.")
     parser.add_argument("--mode", choices=["online", "offline"], default="online", help="Set to 'offline' to disable epss and kev external enrichment requests and use local cache only.")
     parser.add_argument("--no-nvd", action="store_true", help="Disables NVD Enrichment module[No NVD enrichment processing]")
+    parser.add_argument("--output-csv", type=str, metavar="PATH TO SAVE CSV FILE", help="Path to save enriched results in CSV format (optional)")
+    parser.add_argument("--allow-large", action="store_true", help="Allow parsing very large reports (up to ~50GB). Use only for enterprise-scale or synthetic stress tests.")
     
     args = parser.parse_args()
     
@@ -153,7 +205,7 @@ def get_args():
             parser.error(f"Output director '{output_dir}' is not writable.")
         
     return args
-                
+       
 
 def main():
     print_banner()
@@ -210,7 +262,7 @@ def main():
     log.log.print_info(f"Loading file: {args.file}")
     
     # Check and validate json structure.
-    validator = FileInputValidator(args.file)
+    validator = FileInputValidator(args.file, allow_large=args.allow_large)
     try:
         report_json = validator.validate()
     except Exception:
@@ -248,14 +300,31 @@ def main():
         
     log.log.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings")
     
-    if not args.no_nvd:
-        log.log.print_info(f"{Fore.LIGHTYELLOW_EX}[NVD Cache]{Style.RESET_ALL} Initializing NVD Cache...")
-        nvd_cache = NVDCache(cache_dir="./nvd_cache", refresh_days=1, offline=(args.mode == "offline"))
-        nvd_cache.refresh(years=list(range(2017, datetime.now().year + 1))) # skips download if offline
+    # Load nvd config file
+    nvd_config = load_config("nvd_config.yaml")
+    nvd_cfg = nvd_config.get("nvd", {})
+    
+    if not args.no_nvd and nvd_cfg.get("enabled", True):
+        start_year = nvd_cfg.get("start_year", 2017)
+        end_year = nvd_cfg.get("end_year", datetime.now().year)
+        years = list(range(start_year, end_year + 1))
+        
+        refresh_days = nvd_cfg.get("refresh_interval_days", 1)
+        
+        log.log.print_info(f"{Fore.LIGHTYELLOW_EX}[NVD Cache]{Style.RESET_ALL} Initializing NVD Cache for {start_year}-{end_year}...")
+        nvd_cache = NVDCache(cache_dir="./nvd_cache", refresh_days=refresh_days, offline=(args.mode == "offline"))
+        nvd_cache.refresh(years=years) # skips download if offline
         log.log.print_success("NVD Cache ready.")
+        
+        nvd_status = f"✅ (feeds {start_year}–{end_year}, modified)"
+    elif args.no_nvd:
+        nvd_cache = None
+        nvd_status = "Disabled (--no-nvd)"
+        log.log.print_info("[NVD Cache] Disabled via --no-nvd flag. Skipping NVD enrichment per user flag.")
     else:
         nvd_cache = None
-        log.log.print_warning("Skipping NVD enrichment per user flag.")
+        nvd_status = "Disabled (config)"
+        log.log.print_info("[NVD Cache] Disabled via config.")
     
     # 1 Load enrichment data sources
     if kev_source:
@@ -290,22 +359,45 @@ def main():
     for asset in scan_result.assets:
         for finding in asset.findings:
             update_enrichment_status(finding)
+            
+    
+    # Build Sources dict
+    sources = {
+        "exploitdb": True, # Exploit-DB is always loaded
+        "kev": kev_data is not None,
+        "epss": epss_data is not None,
+        "nvd": nvd_status,
+        "stats": {
+            "kev_hits": stats.kev_hits,
+            "kev_total": stats.total_cves,
+            "epss_hits": (stats.total_cves - stats.epss_misses),
+            "epss_total": stats.total_cves,
+            "nvd_vectors": stats.cvss_vectors_assigned,
+            "nvd_validated": stats.cvss_vectors_validated,
+            "exploit_hits": stats.exploitdb_hits,
+        }
+    }
     
         
     if args.output:
         write_output(data=scan_result, file_path=args.output, pretty_print=args.pretty_print)
+        
+    if args.output_csv:
+        from utils.csv_exporter import export_to_csv
+        export_to_csv(scan_result, args.output_csv)
         
     if args.pretty_print and not args.output:
         log.log.print_info("Displaying results to console...")
         print(json.dumps(asdict(scan_result), indent=4))
         
     if kev_source or epss_source:
-        print_summary_banner(scan_result, args.output if args.output else None)
+        print_summary_banner(scan_result, args.output if args.output else None, sources=sources)
 
                 
             
 if __name__ == "__main__":
     start = time.time()
     main()
-    print(f"Total runtime: {(time.time() - start):.2f} seconds")
+    total_runtime = (time.time() - start)
+    print(f"Total runtime: {format_runtime(total_runtime)}")
  

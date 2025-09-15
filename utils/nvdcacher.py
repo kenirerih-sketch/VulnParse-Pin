@@ -3,7 +3,7 @@ import gzip
 import json
 import hashlib
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import utils.logger_instance as log
 
 class NVDCache:
@@ -24,26 +24,31 @@ class NVDCache:
     def _download_feed(self, fname: str):
         """Download nvd data feed if stale or is missing."""
         path = os.path.join(self.cache_dir, fname)
-        if os.path.exists(path):
-            mtime = datetime.fromtimestamp(os.path.getmtime(path))
-            if datetime.now() - mtime < timedelta(days=self.refresh_days):
-                return path # Data still fresh
             
         url = self.BASE_URL + fname
         log.log.print_info(f"Downloading NVD feed: {fname}")
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "VulnParse-PinV1.0/Dev"
+        })
         r.raise_for_status()
+        # Save feed
         with open(path, 'wb') as f:
             f.write(r.content)
         return path
     
-    def _validate_meta(self, fname: str) -> bool:
+    def _validate_meta(self, fname: str, refresh_cache: bool = False) -> bool:
         """Validate feed using .meta file (sha256 + lastModifiedDate)."""
         meta_url = self.BASE_URL + fname.replace(".json.gz", ".meta")
-        r = requests.get(meta_url, timeout=15, headers={
-            "User-Agent": "Dev.VulnParse-PinV1.0"
-        })
-        r.raise_for_status()
+        try:
+            r = requests.get(meta_url, timeout=15, headers={
+                "User-Agent": "VulnParse-PinV1.0/Dev"
+            })
+            r.raise_for_status()
+        except Exception as e:
+            log.log.print_warning(f"[NVDCache] Could not fetch meta for {fname}: {e}")
+            return False
+        
+        
         lines = r.text.strip().splitlines()
         meta = {}
         for line in lines:
@@ -56,25 +61,27 @@ class NVDCache:
         if not os.path.exists(path):
             return False
         
-        # Check SHA256
-        sha256_expected = meta.get("sha256")
-        if sha256_expected:
-            sha256_local = hashlib.sha256(open(path, 'rb').read()).hexdigest()
-            if sha256_local != sha256_expected:
-                log.log.print_warning(f"{fname} hash mismatch. Redownloading from {self.BASE_URL}")
-                return False
         
-        # Check lastModifiedDate
+        # Prefer lastModDate over hash for freshness
         last_mod_meta = meta.get("lastModifiedDate")
         if last_mod_meta:
             # If local file older than meta timestamp, refresh
-            mtime = datetime.fromtimestamp(os.path.getmtime(path))
+            mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
             last_mod_dt = datetime.fromisoformat(last_mod_meta.replace("Z", "+00:00"))
-            if mtime < last_mod_dt:
-                log.log.print_info(f"{fname} is outdated. Redownloading...")
+            if mtime >= last_mod_dt and not refresh_cache:
+                return True
+            
+        # If forced refresh or unsure, validate sha256
+        sha256_expected = meta.get("sha256")
+        if sha256_expected and not refresh_cache:
+            sha256_local = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+            if sha256_local == sha256_expected:
+                return True
+            else:
+                log.log.print_warning(f"{fname} hash mismatch detected.")
                 return False
             
-        return True
+        return False
     
     def _parse_feed(self, path: str):
         """Parse NVD 2.0 feed into lookup dict."""
@@ -135,7 +142,7 @@ class NVDCache:
             return d.get("baseScore"), d.get("vectorString")
         return None, None
     
-    def refresh(self, years=None):
+    def refresh(self, years=None, refresh_cache=False):
         """
         Refresh cache with yearly + modified feeds.
         
@@ -161,10 +168,25 @@ class NVDCache:
                 continue
             
             
-            # Online mode: validate + download if needed
-            if not os.path.exists(path) or not self._validate_meta(fname):
+            # Online mode: Apply staggered policy
+            needs_refresh = False
+            if "modified" in fname:
+                refresh_interval = timedelta(hours=2)
+            else:
+                refresh_interval = timedelta(days=1)
+                
+            if os.path.exists(path):
+                mtime = datetime.fromtimestamp(os.path.getmtime(path))
+                if datetime.now() - mtime > refresh_interval:
+                    needs_refresh = True
+            else:
+                needs_refresh = True
+                
+            if needs_refresh or refresh_cache or not self._validate_meta(fname, refresh_cache):
                 path = self._download_feed(fname)
+                
             self._parse_feed(path)
+            
             
         # Consolidated warning if offline and missing feeds
         if self.offline and missing_feeds:

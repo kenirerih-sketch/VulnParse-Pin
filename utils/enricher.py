@@ -11,6 +11,7 @@ import requests
 import os
 import json
 import re
+from utils.enrichment_stats import stats
 
 from utils.cve_selector import select_authoritative_cve
 from .cvss_utils import CVSS3_REGEX_L, is_valid_cvss_vector, parse_cvss_vector
@@ -144,7 +145,9 @@ def load_epss_from_csv(path_url: str, cache_path: str = "./data/epss_cache.csv.g
     
     # Download or open local .gz file
     if path_url.startswith("http"):
-        response = requests.get(path_url, timeout=5, allow_redirects=True)
+        response = requests.get(path_url, timeout=5, allow_redirects=True, headers={
+            "User-Agent": "VulnParse-PinV1.0/Dev"
+        })
         response.raise_for_status()
         compressed_data = response.content
         
@@ -206,7 +209,9 @@ def load_kev_from_json(path_url: str, cache_path: str = "./data/kev_cache.json.g
                 kev_data[cve.upper()] = True
                 
     if path_url.startswith('http'):
-        response = requests.get(path_url, allow_redirects=True, timeout=5)
+        response = requests.get(path_url, allow_redirects=True, timeout=5, headers={
+            "User-Agent": "VulnParse-PinV1.0/Dev"
+        })
         response.raise_for_status()
         content_type = response.headers.get('Content-Type', '')
         
@@ -265,7 +270,7 @@ def load_kev_from_json(path_url: str, cache_path: str = "./data/kev_cache.json.g
     
     return kev_data
 
-def load_config(config_name="config.json"):
+def load_config_json(config_name="config.json"):
     """
     Load config from a JSON file.
     """
@@ -278,7 +283,7 @@ def load_config(config_name="config.json"):
         log.log.print_error(f"Unable to load config file: {e}")
         return {}
     
-config = load_config()
+config = load_config_json()
 
 def calculate_risk_score(cvss_score: float, exploit_available: bool, cisa_kev: bool, epss_score: float, config: dict):
     weights = config["weights"]
@@ -325,6 +330,7 @@ BASE_NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 
 def fetch_nvd_data(cve_id: str, base_url: str = BASE_NVD_URL, cache_dir: str = './nvd_cache', offline_mode: bool = False):
     '''
+    !DEPRECATED!
     Funtion to retrieve CVE data from the NIST NVD database.
     
     Args:
@@ -372,6 +378,7 @@ BASE_CVEDETAILS_URL = "https://www.cvedetails.com/cve"
     # DEPRECATED--------------------------------------------------------
 def fetch_cvedetails_data(cve_id: str):
     '''
+    !DEPRECATED!
     Method to fetch CVE data from CVEDetails and parse the data for kev data and other data as secondary source for enrichment intel.
     
     Args:
@@ -382,7 +389,7 @@ def fetch_cvedetails_data(cve_id: str):
     '''
     url = f"{BASE_CVEDETAILS_URL}/{cve_id}"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "VulnParse-PinV1.0/Dev"
     }
     # Attempt to retrieve CVE_Details page for CVEID
     try:
@@ -442,11 +449,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
     miss_logger = EnrichmentMissLogger()
     
     baseline_risk_count = 0
-    total_cves = 0
-    total_kev_hits = 0
-    total_epss_misses = 0
-    total_cvss_vector_hits = 0
-    total_cvss_vector_validated = 0
+    
     
     kev_data = kev_data or {}
     epss_data = epss_data or {}
@@ -462,7 +465,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
             enrichment_attempted = False
             if kev_data is not None and epss_data is not None:
                 for cve in finding.cves:
-                    total_cves += 1
+                    stats.total_cves += 1
                     enrichment_attempted = True
                     
                     
@@ -472,7 +475,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                     
                     
                     if kev_hit:
-                        total_kev_hits += 1
+                        stats.kev_hits += 1
                         log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} found in CISA KEV")
                     else:
                         log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No CISA KEV record for {cve}.")
@@ -499,7 +502,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                     else:
                         log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No EPSS Score for {cve}")
                         epss_scores.append(0.0)
-                        total_epss_misses += 1
+                        stats.epss_misses += 1
                         miss_logger.log_miss(cve, cisa_kev=kev_hit, epss_score=None)
                 
                 #TODO: Build small dict of enriched cve info
@@ -509,7 +512,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                     enrichment_map[cve] = {
                         "epss_score": epss_data.get(cve, 0.0),
                         "cisa_kev": kev_data.get(cve.upper(), False),
-                        "exploit_available": finding.exploit_available if len(finding.cves) > 1 else False,
+                        "exploit_available": getattr(finding, "exploit_available", False),
                         "cvss_score": 0.0,
                         "cvss_vector": None
                     }
@@ -525,13 +528,26 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                 if authoritative_cve:
                     best = enrichment_map[authoritative_cve]
                     finding.epss_score = best["epss_score"]
-                    finding.cisa_kev = best["cisa_kev"]
-                    finding.exploit_available = best["exploit_available"]
+                    finding.cisa_kev = best["cisa_kev"] or any(cve_data["cisa_kev"] for cve_data in enrichment_map.values())
+                    
+                    # Aggregate exploit refs and KEV flag across all CVES
+                    kev_flag = False
+                    exploit_flag = False
+                    
+                    for cve, cve_data in enrichment_map.items():
+                        if cve_data.get("cisa_kev"):
+                            kev_flag = True
+                        if cve_data.get("exploit_available)"):
+                            exploit_flag = True
+        
+                    finding.exploit_available = bool(finding.exploit_references) or exploit_flag or kev_flag
+                    
+                    
                     finding.enrichment_source_cve = authoritative_cve
                     log.log.print_info(
                         f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} "
                         f"Authoritative CVE: {authoritative_cve} => "
-                        f"EPSS={best['epss_score']} | KEV={best['cisa_kev']} | Exploit={best['exploit_available']}"
+                        f"EPSS={best['epss_score']} | KEV={best['cisa_kev']} | Exploit={finding.exploit_available}"
                     )
                 else:
                     log.log.print_warning(f"[Enrichment] No authoritative CVE selected for {finding.vuln_id}")
@@ -543,7 +559,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                 if valid_vectors:
                     finding.cvss_vector = valid_vectors[0]
                     log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Assigned CVSS Vector: {finding.cvss_vector}")
-                    total_cvss_vector_hits += 1
+                    stats.cvss_vectors_assigned += 1
                 else:
                     log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} No valid CVSS vectors found for {finding.cvss_vector}")
                     
@@ -554,7 +570,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
             if finding.cvss_vector and is_valid_cvss_vector(str(finding.cvss_vector)):
                 cvss_data = parse_cvss_vector(str(finding.cvss_vector))
                 log.log.print_info(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Validating and reconciling CVSS Vector for {finding.vuln_id}...")
-                total_cvss_vector_validated += 1
+                stats.cvss_vectors_validated += 1
                 
                 if cvss_data:
                     base_score = cvss_data[0]
@@ -627,12 +643,12 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
         ) if asset.findings else 0.0
         
     print(f"{Fore.LIGHTMAGENTA_EX}==============[Enrichment Summary]=============={Style.RESET_ALL}")
-    log.log.print_info(f"   Total CVEs Processed : {total_cves}")
-    log.log.print_info(f"   Total CISA KEV Hits : {total_kev_hits}")
-    log.log.print_info(f"   Total CVSS Vectors Assigned : {total_cvss_vector_hits}")
-    log.log.print_info(f"   Total CVSS Vectors Validated : {total_cvss_vector_validated}")
-    log.log.print_info(f"   Total EPSS Misses : {total_epss_misses}")
-    log.log.print_info(f"   Total Findings Rx Baseline Risk Adjustment: {baseline_risk_count}")
+    log.log.print_info(f"   Total CVEs Processed : {stats.total_cves:,}")
+    log.log.print_info(f"   Total CISA KEV Hits : {stats.kev_hits:,}")
+    log.log.print_info(f"   Total CVSS Vectors Assigned : {stats.cvss_vectors_assigned:,}")
+    log.log.print_info(f"   Total CVSS Vectors Validated : {stats.cvss_vectors_validated:,}")
+    log.log.print_info(f"   Total EPSS Misses : {stats.epss_misses:,}")
+    log.log.print_info(f"   Total Findings Rx Baseline Risk Adjustment: {baseline_risk_count:,}")
     print(f"{Fore.LIGHTMAGENTA_EX}============[Enrichment Summary End]============{Style.RESET_ALL}")
     
     miss_logger.write_log()

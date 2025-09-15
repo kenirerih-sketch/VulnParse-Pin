@@ -21,9 +21,11 @@ def is_valid_cve_api_response(data):
     return isinstance(data, dict) and "cve" in data
 
 class FileInputValidator:
-    def __init__(self, file_path, max_size_mb=50, max_nesting=12):
+    def __init__(self, file_path, max_size_mb=200, max_nesting=12, allow_large: bool = False):
         self.file_path = file_path
+        self.allow_large = allow_large
         self.max_size_bytes = max_size_mb * 1024 * 1024
+        self.max_large_size_bytes = 50 * 1024 * 1024 * 1024
         self.max_nesting = max_nesting
         self.report_json = None
         
@@ -49,9 +51,17 @@ class FileInputValidator:
             log.log.print_error("File extention or initial structure invalid.")
             sys.exit(1)
             
-        if os.path.getsize(self.file_path) > self.max_size_bytes:
-            log.log.print_error("File exceeds size limit.")
+        size_bytes = os.path.getsize(self.file_path)
+        limit = self.max_large_size_bytes if self.allow_large else self.max_size_bytes
+        
+        if size_bytes > limit:
+            log.log.print_error(f"File exceeds size limit. Size: {size_bytes/1024/1024:.2f} MB exceeds limit" f"({limit/1024/1024:.0f} MB). Use --allow-large for enterprise-size reports.")
             sys.exit(1)
+            
+        if self.allow_large and size_bytes > self.max_size_bytes:
+            log.log.print_warning(f"⚠️ Large file mode enabled. File size = {size_bytes/1024/1024:.2f} MB. "
+        f"Parsing may be slow or memory intensive.")
+            
             
         # Load file now after validation
         
