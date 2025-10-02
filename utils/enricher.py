@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 import hashlib
 import random
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import gzip
 import io
 import csv
@@ -444,6 +444,43 @@ def prefer_vector(vectors):
         return 99
     return sorted(vectors, key=rank)[0]
 
+def resolve_cvss_vector(scanner_vector: str, auth_cve: str, nvd_cache: dict, current_score: float = 0.0) -> Tuple[str, float]:
+    """
+    Resolve a CVSS vector for a finding using a priority pipeline:
+    1. Use scanner-provided
+    2. Fall back to NVD cache vector for auth CVE
+    3. If only a base score exists, return scoreonly
+    4. Othewise mark as Attempted_NotFound sentinel.
+    """
+    # Case 1: Trust scanner vector if valid
+    if scanner_vector and is_valid_cvss_vector(scanner_vector):
+        base_score = parse_cvss_vector(scanner_vector)[0]
+        if abs(base_score - current_score) > 0.1:
+            log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Score mismatch (scanner {base_score} vs stored {current_score}), reconciling...")
+            current_score = base_score
+        log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Using valid scanner vector: {scanner_vector}")
+        return scanner_vector, current_score
+    
+    # Case 2: Fallback to NVD
+    if nvd_cache and auth_cve:
+        nvd_record = nvd_cache.get(auth_cve)
+        if nvd_record:
+            nvd_vector = nvd_record.get("cvss_vector")
+            if nvd_vector and is_valid_cvss_vector(nvd_vector):
+                base_score = parse_cvss_vector(nvd_vector)[0]
+                log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Using NVD vector for {auth_cve}: {nvd_vector}")
+                return nvd_vector, base_score
+            
+            # Case 3: Score-only fallback
+            nvd_score = nvd_record.get("cvss_score")
+            if nvd_score is not None:
+                log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} No valid vector for {auth_cve}," f"using ScoreOnly sentinel with base score {nvd_score}")
+                return f"SENTINEL:ScoreOnly:{nvd_score}", nvd_score
+    
+    # Case 4: Nothing
+    log.log.print_warning(f"[CVSSVector] No CVSS vector available for {auth_cve or 'Unknown'}." " Marking as 'Attempted_NotFound'")
+    return "SENTINEL:Attempted_NotFound", current_score
+
 def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, epss_data: Dict[str, float] = None, offline_mode: bool = False, nvd_cache: Optional[Any] = None) -> None:
     '''
     Enrich the findings in a ScanResult object with EPSS Score, CISA KEV status, exploit indicators, and recalculate triage priority.
@@ -463,15 +500,16 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
     kev_data = kev_data or {}
     epss_data = epss_data or {}
     
+    enrichment_map = {}
+    
      #TODO: DEBUG
     
     for asset in results.assets:
         for finding in asset.findings:
-            sec_cvss_vector = None
-            sec_cvss_vectors = []
             cisa_hits = []
             epss_scores = []
             enrichment_attempted = False
+            enrichment_map.clear()
             if kev_data is not None and epss_data is not None:
                 for cve in finding.cves:
                     stats.total_cves += 1
@@ -487,21 +525,9 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                         stats.kev_hits += 1
                         log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} found in CISA KEV")
                     else:
-                        log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No CISA KEV record for {cve}.")
+                        log.log.logger.warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No CISA KEV record for {cve}.")
                         miss_logger.log_miss(cve, cisa_kev=False, epss_score=None)
-                        
-                    # Fetch nvd_data as secondary source
-                    if nvd_cache:
-                        nvd_record = nvd_cache.get(cve)
-                        
-                        if nvd_record.get("vector"):
-                            sec_cvss_vector = nvd_record["vector"]
-                            sec_cvss_vectors.append(sec_cvss_vector)
-                            log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[NVDData]{Style.RESET_ALL} CVSS Vector Found in NVD Cache for {cve}")
-                            log.log.print_info(f"[CVSSVector] Using vector {sec_cvss_vector} for {cve}")
-                        else:
-                            log.log.print_warning(f"[CVSSVector] No usable CVSS vector found for {cve} in NVD Cache")
-                    
+                
                     
                     # EPSS Score Enrichment
                     epss_score = epss_data.get(cve)
@@ -509,15 +535,13 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                         epss_scores.append(epss_score)
                         log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} {cve} EPSS Score: {epss_score}")
                     else:
-                        log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No EPSS Score for {cve}")
+                        log.log.logger.warning(f"{Fore.LIGHTMAGENTA_EX}[Enrichment]{Style.RESET_ALL} No EPSS Score for {cve}")
                         epss_scores.append(0.0)
                         stats.epss_misses += 1
                         miss_logger.log_miss(cve, cisa_kev=kev_hit, epss_score=None)
                 
-                #TODO: Build small dict of enriched cve info
-                enrichment_map = {}
-                
-                for idx, cve in enumerate(finding.cves):
+                    #TODO: Build small dict of enriched cve info
+                    
                     enrichment_map[cve] = {
                         "epss_score": epss_data.get(cve, 0.0),
                         "cisa_kev": kev_data.get(cve.upper(), False),
@@ -526,18 +550,35 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                         "cvss_vector": None
                     }
                     
-                    if idx < len(sec_cvss_vectors):
-                        vector = sec_cvss_vectors[idx]
-                        if is_valid_cvss_vector(vector):
-                            enrichment_map[cve]["cvss_vector"] = vector
-                            enrichment_map[cve]["cvss_score"] = parse_cvss_vector(vector)[0]
-                            
+                    # Fetch nvd_data as secondary source
+                    if nvd_cache:
+                        nvd_record = nvd_cache.get(cve)
+                        if nvd_record:
+                            vector = nvd_record.get("cvss_vector")
+                            if vector and is_valid_cvss_vector(vector):
+                                enrichment_map[cve]["cvss_vector"] = vector
+                                enrichment_map[cve]["cvss_score"] = parse_cvss_vector(vector)[0]
+                                log.log.logger.debug(f"{Fore.LIGHTMAGENTA_EX}[NVD_Data]{Style.RESET_ALL} CVSS Vector Found in NVD Cache for {cve} - Mapping vector")
+                            elif nvd_record.get("cvss_score") is not None:
+                                enrichment_map[cve]["cvss_score"] = nvd_record["cvss_score"]
+                                log.log.logger.warning(f"{Fore.LIGHTMAGENTA_EX}[NVD_Data]{Style.RESET_ALL} No vector, but base score found for {cve}: {nvd_record['cvss_score']}")
+                        else:
+                            log.log.logger.warning(f"{Fore.LIGHTMAGENTA_EX}[NVD_Data]{Style.RESET_ALL} No usable CVSS vector found for {cve} in NVD Cache")
+                    else:
+                        log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[NVD_Data]{Style.RESET_ALL} No NVD Cache loaded. NVD Based vector parsing will be unavailable.")
+                             
                 authoritative_cve = select_authoritative_cve(list(enrichment_map.keys()), enrichment_map)
                 
                 if authoritative_cve:
                     best = enrichment_map[authoritative_cve]
                     finding.epss_score = best["epss_score"]
                     finding.cisa_kev = best["cisa_kev"] or any(cve_data["cisa_kev"] for cve_data in enrichment_map.values())
+                    finding.cvss_vector, finding.cvss_score = resolve_cvss_vector(
+                        scanner_vector=finding.cvss_vector,
+                        auth_cve=authoritative_cve,
+                        nvd_cache=nvd_cache,
+                        current_score=finding.cvss_score or 0.0
+                    )
                     
                     # Aggregate exploit refs and KEV flag across all CVES
                     kev_flag = False
@@ -546,7 +587,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                     for cve, cve_data in enrichment_map.items():
                         if cve_data.get("cisa_kev"):
                             kev_flag = True
-                        if cve_data.get("exploit_available)"):
+                        if cve_data.get("exploit_available"):
                             exploit_flag = True
         
                     finding.exploit_available = bool(finding.exploit_references) or exploit_flag or kev_flag
@@ -559,54 +600,19 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                         f"EPSS={best['epss_score']} | KEV={best['cisa_kev']} | Exploit={finding.exploit_available}"
                     )
                 else:
-                    log.log.print_warning(f"[Enrichment] No authoritative CVE selected for {finding.vuln_id}")
-
+                    log.log.logger.debug(f"[Enrichment] No authoritative CVE selected for Vuln ID: {finding.vuln_id}")
                 
-            # Get CVSS Vectors w/ Validation / Reconciliation
-            if sec_cvss_vectors:
-                valid_vectors = [v for v in sec_cvss_vectors if is_valid_cvss_vector(v)]
-                if valid_vectors:
-                    finding.cvss_vector = prefer_vector(valid_vectors)
-                    log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Assigned CVSS Vector: {finding.cvss_vector}")
-                    stats.cvss_vectors_assigned += 1
-                else:
-                    log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} No valid CVSS vectors found for {finding.cvss_vector}")
-                    
-            elif finding.cvss_vector in ["N/A", "Unknown", None]:
-                log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} No CVSS vector available for {finding.vuln_id}. Marking as 'Attempted_NotFound'")
-                finding.cvss_vector = "SENTINEL:Attempted_NotFound"
             
-            # Now Validate and Reconcile CVSS Vector
+            # Stats Vector Tracking
             if finding.cvss_vector:
                 if finding.cvss_vector.startswith("SENTINEL:"):
-                    log.log.print_info(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Skipping validation for sentinel state: "
-            f"{finding.cvss_vector}")
-            elif is_valid_cvss_vector(str(finding.cvss_vector)):
-                cvss_data = parse_cvss_vector(str(finding.cvss_vector))
-                log.log.print_info(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Validating and reconciling CVSS Vector for {finding.vuln_id}...")
-                stats.cvss_vectors_validated += 1
-                
-                if cvss_data:
-                    base_score = cvss_data[0]
-                    log.log.print_info(f"{finding.vuln_id} Base score from vector: {base_score}")
-                    
-                    # Auto-Reconcile CVSS base score if it differs by tolerance.
-                    if abs(base_score - (finding.cvss_score or 0.0)) > 0.1:
-                        log.log.print_warning(f"Score mismatch for {finding.vuln_id}: vector {base_score} vs field: {finding.cvss_score}")
-                        log.log.print_success(f"Overwriting cvss score with value from CVSS Vector: {base_score}")
-                        finding.cvss_score = base_score
-                        
-                    else:
-                        log.log.print_success(f"CVSS score for {finding.vuln_id} is consistent.")
-                    
-                        
+                    log.log.logger.debug(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Skipping validation for sentinel state: "f"{finding.cvss_vector}")
                 else:
-                    log.logger.debug(f"Invalid CVSS vector for {finding.vuln_id}")
-            
-            elif finding.cvss_score and not finding.cvss_vector:
-                log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} No CVSS vector but score present for {finding.vuln_id}."f"Keeping score {finding.cvss_score} as-is.")
-            else:
-                log.log.print_error(f"Invalid CVSS vector format for {finding.vuln_id}: {finding.cvss_vector}")
+                    stats.cvss_vectors_assigned += 1
+                    stats.cvss_vectors_validated += 1
+                    log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} "f"Validated vector for {finding.vuln_id}: {finding.cvss_vector}")
+                    
+                    
                     
             # Calculate Risk_Score
             cvss = finding.cvss_score or 0.0
@@ -654,7 +660,7 @@ def enrich_scan_results(results: ScanResult, kev_data: Dict[str, bool] = None, e
                 any(cisa_hits) or
                 any(score > 0.1 for score in epss_scores) or
                 finding.exploit_available)
-            
+             
         asset.avg_risk_score = round(
             sum(f.risk_score for f in asset.findings) / len(asset.findings), 2
         ) if asset.findings else 0.0

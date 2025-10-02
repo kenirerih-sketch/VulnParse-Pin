@@ -1,0 +1,9 @@
+<NessusClientData_v2>
+  <Report name="HostD">
+    <ReportHost name="10.0.0.7">
+      <ReportItem pluginID="19506" risk_factor="Critical" cvss_base_score="9.8" cvss_vector="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
+        <cve>CVE-2023-8765</cve>
+      </ReportItem>
+    </ReportHost>
+  </Report>
+</NessusClientData_v2>

@@ -18,18 +18,30 @@ class LoggerWrapper:
         self.logger.addHandler(file_handler)
         
     def print_info(self, msg):
+        """
+        Logger will log and print a INFO log to console and log.
+        """
         print(f"{Fore.LIGHTCYAN_EX}[INFO] [*]{Style.RESET_ALL} {msg}")
         self.logger.info(msg)
         
     def print_success(self, msg):
+        """
+        Logger will log and print an SUCCESS log to console and log.
+        """
         print(f"{Fore.LIGHTGREEN_EX}[SUCCESS] [+]{Style.RESET_ALL} {msg}")
         self.logger.info(msg)
         
     def print_warning(self, msg):
+        """
+        Logger will log and print a WARNING log to console and log.
+        """
         print(f"{Fore.YELLOW}[WARNING] [!]{Style.RESET_ALL} {msg}")
         self.logger.warning(msg)
         
     def print_error(self, msg):
+        """
+        Logger will log and print an ERROR log to console and log.
+        """
         print(f"{Fore.RED}[ERROR] [-]{Style.RESET_ALL} {msg}")
         self.logger.error(msg)
         

@@ -1,0 +1,9 @@
+<NessusClientData_v2>
+  <Report name="HostE">
+    <ReportHost name="10.0.0.8">
+      <ReportItem pluginID="51192" risk_factor="" cvss_base_score="6.0" cvss_vector="N/A">
+        <cve>CVE-2022-5555</cve>
+      </ReportItem>
+    </ReportHost>
+  </Report>
+</NessusClientData_v2>

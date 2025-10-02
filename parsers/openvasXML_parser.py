@@ -46,25 +46,27 @@ class OpenVASXMLParser(BaseParser):
                 # Get Fields
                 nvt = result.find("nvt")
                 
+                title = nvt.findtext("name") if nvt is not None else "Unknown"
+                solution = nvt.findtext("solution") if nvt is not None else "Unknown"
                 cve_ids = self._extract_cves(nvt, result)
                 cvss_score, cvss_vector = self._extract_cvss(nvt, result)
                 
                 finding = Finding(
                     vuln_id=self._extract_nvd_oid(result),
-                    title=self._safe_text(result.findtext("name")),
+                    title=self._safe_text(result.findtext("name")) or title,
                     description=self._safe_text(result.findtext("description")),
                     severity=self._safe_text(result.findtext("severity")) or self._safe_text(result.findtext("threat")),
                     cvss_score=cvss_score,
-                    cvss_vector=cvss_vector,
+                    cvss_vector=cvss_vector or None,
                     cves=cve_ids,
                     affected_port=self._parse_port(result.findtext("port")),
                     protocol=self._parse_protocol(result.findtext("port")),
-                    solution=self._safe_text(result.findtext("solution")),
+                    solution=self._safe_text(result.findtext("solution")) or solution,
+                    assetid=ip_or_host,
                 )
                 asset.findings.append(finding)
                 
             assets.append(asset)
-            
         return ScanResult(scan_metadata=metadata, assets=assets)
                 
     def _extract_cves(self, nvt_elem, result_elem):
@@ -104,6 +106,7 @@ class OpenVASXMLParser(BaseParser):
         vector_candidates = [
             nvt_elem.findtext("cvss3_vector") if nvt_elem is not None else None,
             nvt_elem.findtext("cvss_base_vector") if nvt_elem is not None else None,
+            nvt_elem.findtext("cvss_vector") if nvt_elem is not None else None,
             result_elem.findtext("cvss3_vector"),
             result_elem.findtext("cvss_vector"),
         ]
@@ -135,3 +138,5 @@ class OpenVASXMLParser(BaseParser):
         if not port_field or "/" not in port_field:
             return None
         return port_field.split("/")[1]
+    
+        

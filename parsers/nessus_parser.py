@@ -1,7 +1,11 @@
+from gc import get_objects
 import json
-from datetime import timezone
+from datetime import date, timezone
+from traceback import print_tb
 from typing import Any, Dict, List, Optional
 import ipaddress
+
+from rich import print_json
 from classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
 from parsers.base_parser import BaseParser
 from utils.normalizer import *
@@ -81,16 +85,15 @@ class NessusParser(BaseParser):
         Returns:
             ScanResult: An object containing structured scan metadata, assets, and vulnerability findings.
         """
-        
-        nessus_json = self.detect_and_transform_flat_json(nessus_json)
+        depth = self.get_json_depth(nessus_json)
+        if depth <= 1:
+            nessus_json = self.detect_and_transform_flat_json(nessus_json)
         if "scan_metadata" in nessus_json and "scan_date" in nessus_json["scan_metadata"]:
             scan_date = nessus_json["scan_metadata"].get("scan_date")
         
         metadata, report_data = self.normalize_structure(nessus_json)
-        
+        scan_date = metadata.get("scan_date")
         assets: Dict[str, Asset] = {}
-        
-        
         
         
         if isinstance(report_data, list) and report_data and any(k in report_data[0] for k in ["finding", "results"]):
@@ -101,9 +104,9 @@ class NessusParser(BaseParser):
         
         
         for report_host in report_data:
-            hostname = coerce_str(self.get_key_case_ins(report_host, ["host-name", "hostname", "host_name"], default="unknown"))
-            ip_address = coerce_ip(self.get_key_case_ins(report_host, ["host-ip", "ip", "ip-address", "ip_address", "host_ip"], default="Unknown"))
-            asset_id_raw = hostname or ip_address or "unknown"
+            hostname = coerce_str(self.get_key_case_ins(report_host, ["host-name", "hostname", "host_name", "host"], default="Unknown"))
+            ip_address = coerce_ip(self.get_key_case_ins(report_host, ["host-ip", "ip", "ip-address", "ip_address", "host_ip", "host"], default="Unknown"))
+            asset_id_raw = hostname or ip_address or "Unknown"
             asset_id = coerce_str(asset_id_raw, default="Unknown")
             
             if asset_id not in assets:
@@ -175,7 +178,7 @@ class NessusParser(BaseParser):
         
         metadata = ScanMetaData(
             source="Nessus",
-            scan_date=scan_date,
+            scan_date=scan_date if scan_date else "SENTINEL:Date_Unavailable",
             asset_count=asset_count,
             vulnerability_count=vuln_count,
             parsed_at=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -321,8 +324,8 @@ class NessusParser(BaseParser):
             return self.normalize_nessus_scan_metadata(data)
         elif self.is_nessus_source_scan_date(data):
             return self.normalize_nessus_source_scan_date(data)
-        elif self.is_qualys_style(data):
-            return self.normalize_qualys_style(data)
+        elif self.is_top_level_scan(data):
+            return self.normalize_top_level_scan(data)
         elif self.is_assets_based(data):
             return self.normalize_assets_based(data)
         elif self.is_hosts_based(data):
@@ -343,8 +346,9 @@ class NessusParser(BaseParser):
     def is_nessus_source_scan_date(self, data):
         return isinstance(data, dict) and all(k in data for k in ["source", "scan_date", "report"])
 
-    def is_qualys_style(self, data):
-        return isinstance(data, dict) and "scan_date" in data and "vulnerabilities" in data
+    def is_top_level_scan(self, data):
+        log.log.print_info("top-levle-scan detected")
+        return isinstance(data, dict) and "scan" in data and isinstance(data.get("scan", {}), dict) and "results" in data.get("scan")
 
     def is_assets_based(self, data):
         return isinstance(data, dict) and "assets" in data
@@ -368,12 +372,22 @@ class NessusParser(BaseParser):
         report_data = data.get("report", [])
         return metadata, report_data
 
-    def normalize_qualys_style(self, data):
-        metadata = {
-            "source": "Qualys",
-            "scan_date": data.get("scan_date")
-        }
-        report_data = data.get("vulnerabilities", [])
+    def normalize_top_level_scan(self, data):
+        """
+        Normalize Nessus JSON into a consistent format that the parse expects.
+        """
+        
+        # Case - Top-Level 'scan' wrapper
+        if "scan" in data:
+            scan = data["scan"]
+            metadata = {
+                "source": "Nessus",
+                "scan_date": scan.get("scan_data") or "SENTINEL:Orig_Date_NotFound",
+            }
+            results = scan.get("results", [])
+        
+        
+        report_data = results
         return metadata, report_data
 
     def normalize_assets_based(self, data):
@@ -411,3 +425,16 @@ class NessusParser(BaseParser):
             return "Medium"
         else:
             return "Low"
+    
+    def get_json_depth(self, obj, level=1):
+        """Return the depth of a JSON-like structure (dict/list)."""
+        if isinstance(obj, dict):
+            if not obj:
+                return level
+            return max(self.get_json_depth(v, level + 1) for v in obj.values())
+        elif isinstance(obj, list):
+            if not obj:
+                return level
+            return max(self.get_json_depth(v, level + 1) for v in obj)
+        else:
+            return level

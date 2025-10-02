@@ -23,6 +23,7 @@ class Finding:
     protocol: Optional[str] = None
     detection_plugin: Optional[str] = None
     plugin_output: Optional[str] = None
+    plugin_evidence: Optional[List[str]] = None
     solution: Optional[str] = None
     remediation: Optional[str] = None
     references: Optional[List[str]] = field(default_factory=list)
@@ -49,6 +50,9 @@ class ScanMetaData:
     asset_count: int
     vulnerability_count: int
     parsed_at: Optional[str] = None
+    source_file: Optional[str] = None
+    scan_name: Optional[str] = None
+    
     
 @dataclass
 class ScanResult:
