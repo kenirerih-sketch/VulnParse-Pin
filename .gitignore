@@ -2,3 +2,4 @@
 *.json
 *.csv
 *.log
+vulnparse_pin.log

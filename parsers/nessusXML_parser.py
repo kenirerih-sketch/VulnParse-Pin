@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
-import re
 from lxml import etree
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from .base_parser import BaseParser
 from classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
 import utils.logger_instance as log
@@ -34,7 +32,7 @@ class NessusXMLParser(BaseParser):
     def parse(self) -> ScanResult:
         """Parse Nessus XML (.nessus) into a ScanResult with Assets + Findings."""
         if not self.filepath:
-            raise ValueError("NessusXMLParser requires filepath input")
+            raise ValueError("NessusXMLParser requires an accessible filepath.")
         
         parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
         tree = etree.parse(self.filepath, parser)
