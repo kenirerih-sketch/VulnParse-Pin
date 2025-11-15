@@ -110,7 +110,7 @@ def print_summary_banner(scan_result, output_file=None, sources=None):
             
             print(f"🔑    KEV Hits                    : {kev_hits:,}/{kev_total:,} ({kev_pct:.2f}%)")
             print(f"📈    EPSS Coverage               : {epss_hits:,}/{epss_total:,} ({epss_pct:.2f}%)")
-            print(f"📊    NVD Vectors                 : {nvd_vectors:,} assigned, {nvd_validated:,} validated")
+            print(f"📊    CVSS Vectors (Scanner/NVD)  : {nvd_vectors:,} assigned, {nvd_validated:,} validated")
             print(f"💣    Exploit-DB Hits             : {exploit_hits:,}")
         
     print("="*60 + "\n")

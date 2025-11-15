@@ -9,12 +9,31 @@ except ImportError:
     CVSS3 = None #Fallback if module isn't installed
     
     
-CVSS3_REGEX = r'^\bCVSS:3\.[0-1]/[A-Za-z]+:[A-Z]+/AC:[A-Z]+/PR:[A-Z]+/UI:[A-Z]+/S:[A-Z]+/C:[A-Z]+/I:[A-Z]+/A:[A-Z]+\b$'
+CVSS3_REGEX = r'^CVSS:3\.[01]/AV:(N|A|L|P)/AC:(L|H)/PR:(N|L|H)/UI:(N|R)/S:(U|C)/C:(N|L|H)/I:(N|L|H)/A:(N|L|H)$'
 CVSS3_REGEX_L = r'CVSS:3\.[0-1]/AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH]'
+CVSS2_REGEX = r'^AV:(L|A|N)/AC:(L|M|H)/Au:(N|S|M)/C:(N|P|C)/I:(N|P|C)/A:(N|P|C)$'
+
+CVSS3_RE = re.compile(CVSS3_REGEX)
+CVSS2_RE = re.compile(CVSS2_REGEX)
+
+def detect_cvss_version(vector: Optional[str]) -> Optional[str]:
+    """Return 'v3', 'v2', or None based on syntax."""
+    if not vector:
+        return None
+    
+    v = re.sub(r'\s+', '', vector.strip())
+    if v.startswith("SENTINEL:"):
+        return None
+    
+    if CVSS3_RE.match(v):
+        return "v3"
+    if CVSS2_RE.match(v):
+        return "v2"
+    return None
 
 def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     '''
-    Validate if a given string is well-formed CVSS V3.x vector.
+    Validate if a given string is well-formed CVSS V3.x or V2 vector.
     
     Args:
         vector (str): CVSS vector string.
@@ -22,12 +41,7 @@ def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     Returns:
         bool: True if valid, False otherwise.
     '''
-    
-    if vector is None:
-        return False
-    pattern = re.compile(CVSS3_REGEX)
-    match = pattern.match(vector)
-    return bool(match)
+    return detect_cvss_version(vector) in ("v2", "v3")
 
 
 def parse_cvss_vector(vector: str):

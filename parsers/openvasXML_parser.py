@@ -1,4 +1,9 @@
+from ctypes.wintypes import tagSIZE
+from multiprocessing import Value
+from pathlib import Path
+from unittest import result
 from lxml import etree
+from defusedxml.lxml import fromstring
 from datetime import datetime, timezone
 import os
 import utils.logger_instance as log
@@ -7,47 +12,79 @@ from .base_parser import BaseParser
 from classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
 
 class OpenVASXMLParser(BaseParser):
+    NAME = "openvas-xml"
+    
     @classmethod
-    def detect_file(cls, filepath):
-        """Detect if the file is an OpenVAS XML file."""
-        if filepath.lower().endswith(".xml"):
-            try:
-                if os.path.getsize(filepath) > 500 * 1024 * 1024:
-                    log.log.print_error(f"File supplied exceeds 500MB. This is a mechanism to protect against DOS. File: {filepath}")
-                    return False
-
-                # Setup Parser
-                parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
-                tree = etree.parse(filepath, parser)
-                root = tree.getroot()
-                
-                # Validate OpenVAS report with root tag
-                has_report = root.tag == "report" or root.find(".//report") is not None
-                has_nvt = root.find(".//nvt") is not None
-                
-                return has_report and has_nvt
-            except Exception:
+    def detect_file(cls, filepath) -> bool:
+        """Detect if the file is an OpenVAS XML file by structure"""
+        
+        if not filepath.lower().endswith(".xml"):
+            return False
+        
+        try:
+            size = os.path.getsize(filepath)
+            if size > 500 * 1024 * 1024:
+                log.log.print_error(f"File supplied exceeds 500MB. "
+                                    f"This is a mechanism to protect against DOS. File: {filepath}")
                 return False
-        return False
+        except OSError as e:
+            log.log.logger.error(f"Failed to stat file for detection: {e}")
+            return False
+        
+        try:
+            raw = Path(filepath).read_bytes()
+            root = fromstring(raw)
+        except Exception as e:
+            log.log.logger.error(f"Error detecting file: {e}")
+            return False
+        
+        if (
+            root.tag == "NessusClientData_v2"
+            or root.find(".//NessusClientData_v2") is not None
+        ):
+            return False
+        
+        result_nodes = root.xpath(".//report//results//result | .//results//result")
+        has_nvt = root.find(".//nvt") is not None
+        
+        # Confirm GVM structure
+        return bool(result_nodes) and has_nvt
     
     def parse(self) -> ScanResult:
         """Parse OpenVAS XML into ScanResult object with Assets + Findings."""
         if not self.filepath:
             raise ValueError("OpenVASXMLParser requires an accessible filepath.")
         
+        # Guard
+        try:
+            size = os.path.getsize(self.filepath)
+            if size > 500 * 1024 * 1024:
+                raise ValueError(f"Refusing to parse files largers than 500MB: {self.filepath}")
+        except OSError as e:
+            raise ValueError(f"Failed to stat file {self.filepath}: {e}") from e
         
-        parser = etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
-        tree = etree.parse(self.filepath, parser)
-        root = tree.getroot()
+        # Parse XML securely. 
+        raw = Path(self.filepath).read_bytes()
+        try:
+            root = fromstring(raw)
+        except Exception as e:
+            raise ValueError(f"Failed to parse XML: {e}") from e
+        
         
         assets: Dict[str, Asset] = {}
+        dropped = 0
         
         scan_date = root.findtext(".//creation_time") or "SENTINEL:Date_Unavailable"
         scan_name = root.attrib.get("id") or "SENTINEL:Not_Found"
         
         # Start Parsing
         for result in root.findall(".//result"):
-            host = result.findtext("host") or "SENTINEL:No_Hostname"
+            raw_host = result.findtext("host")
+            if not raw_host or not raw_host.strip():
+                log.log.logger.warning("Dropping Openvas result with no host entry — malformed or incomplete XML <result> block.")
+                dropped += 1
+                continue
+            host = raw_host.strip()
             port = self._safe_int(self._parse_port(result.findtext("port")))
             protocol = self._safe_text(self._parse_protocol(result.findtext("port")))
             description = self._safe_text(result.findtext("description")) or "SENTINEL:No_Description"
@@ -63,15 +100,22 @@ class OpenVASXMLParser(BaseParser):
                 if tags is None:
                     print(f"[DEBUG] YO TAGS IS NULL FAM")
                 title = nvt_field.findtext("name")
-                cvss_vector = ((result.findtext(".//severities/severity/value") or "").strip() or self._extract_from_tags(tags, "cvss_base_vector=") or "SENTINEL:Vector_Unavailable")
-                cvss_score = self._safe_float(nvt_field.findtext("cvss_base"))
+                cvss_score, cvss_vector = self._extract_cvss(nvt_field, result)
+                if not cvss_vector:
+                    cvss_vector = "SENTINEL:Vector_Unavailable"
                 solution = self._safe_text(nvt_field.findtext("solution"))
                 # Plugin_Output
                 plugin_output = self._extract_from_tags(tags, "summary=")
                 # Grab CVEs
-                cves = [
-                    ref.text.strip() for ref in nvt_field.findall(".//refs/ref[@type='cve']") if ref.text
-                ] or ["SENTINEL:No_CVE_Listed"]
+                cves = self._extract_cves(nvt_field, result)
+            else:
+                tags = ""
+                title = None
+                cvss_vector = "SENTINEL:Vector_Unavailable"
+                cvss_score = 0.0
+                solution = None
+                plugin_output = None
+                cves = ["SENTINEL:No_CVE_Listed"]
                 
             # Build out evidence values and other potentially valuable information
             detection = result.find("detection")
@@ -86,7 +130,7 @@ class OpenVASXMLParser(BaseParser):
             summary, summarized_evidence = self._summarize_plugin_output(plugin_output)
             if not evidence:
                 evidence = summarized_evidence
-
+            
             # Now time for Asset Creation
             if host not in assets:
                 assets[host] = Asset(
@@ -119,6 +163,10 @@ class OpenVASXMLParser(BaseParser):
             )
             assets[host].findings.append(finding)
         
+        # Check Droppped findings and log.
+        if dropped:
+            log.log.logger.info(f"Dropped {dropped} malformed OpenVAS result(s) with no host.")
+            
         asset_count = len(assets)
         vuln_count = sum(len(asset.findings) for asset in assets.values())
         
@@ -137,20 +185,37 @@ class OpenVASXMLParser(BaseParser):
                 
     def _extract_cves(self, nvt_elem, result_elem):
         cves = []
+        
+        # Primary Method
         if nvt_elem is not None:
-            cves.extend(self._safe_text(c.text) for c in nvt_elem.findall("cve") if c is not None and c.text)
+            for ref in nvt_elem.findall(".//refs/ref[@type='cve']"):
+                raw = (ref.get("id") or (ref.text or "")).strip()
+                if raw:
+                    cves.append(raw)
+                    
         # CVEs in tags/reference fallback
-        tags_text = self._safe_text(result_elem.findtext("tags")) or self._safe_text(result_elem.findtext("references"))
-        if tags_text:
+        tags_text = []
+        
+        if nvt_elem is not None:
+            tags_text.append(self._safe_text(nvt_elem.findtext("tags")))
+            tags_text.append(self._safe_text(nvt_elem.findtext("description")))
+            
+        # Catch all for diff schemas
+        tags_text.append(self._safe_text(result_elem.findtext("tags")))
+        tags_text.append(self._safe_text(result_elem.findtext("description")))
+        
+        joined = " ".join(t for t in tags_text if t)
+        if joined:
             import re
-            cves.extend(re.findall(rf"CVE-\d{4}-\d{4,7}", tags_text))
+            for match in re.findall(rf"CVE-\d{4}-\d{4,7}", joined):
+                cves.append(match)
         
         # Dedup & keep order
         seen = set(); out = []
         for cv in cves:
             if cv and cv not in seen:
                 seen.add(cv); out.append(cv)
-        return out
+        return out or ["SENTINEL:No_CVE_Listed"]
     
     def _extract_cvss(self, nvt_elem, result_elem):
         """
@@ -176,8 +241,27 @@ class OpenVASXMLParser(BaseParser):
             result_elem.findtext("cvss3_vector"),
             result_elem.findtext("cvss_vector"),
         ]
+        
+        # Pull from tags key/value strings
+        tag_texts = []
+        if nvt_elem is not None:
+            tag_texts.append(self._safe_text(nvt_elem.findtext("tags")))
+        tag_texts.append(self._safe_text(result_elem.findtext("tags")))
+        
+        for tags in tag_texts:
+            if not tags:
+                continue
+            
+            vec = (
+                self._extract_from_tags(tags, "cvss3_vector=")
+                or self._extract_from_tags(tags, "cvss_base_vector=")
+            )
+            if vec:
+                vector_candidates.append(vec)
+        
         vector = next((self._safe_text(v) for v in vector_candidates if v), None)
         
+        # Return score and vector
         return score, vector
     
     @staticmethod            

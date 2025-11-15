@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import hashlib
+from json import scanner
 import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,7 +15,7 @@ import re
 from utils.enrichment_stats import stats
 
 from utils.cve_selector import select_authoritative_cve
-from .cvss_utils import CVSS3_REGEX_L, is_valid_cvss_vector, parse_cvss_vector
+from .cvss_utils import CVSS3_REGEX_L, detect_cvss_version, is_valid_cvss_vector, parse_cvss_vector
 from classes.dataclass import ScanResult, TriageConfig
 from utils.triage_priority_helper import determine_triage_priority
 from .logger import *
@@ -374,60 +375,6 @@ def fetch_nvd_data(cve_id: str, base_url: str = BASE_NVD_URL, cache_dir: str = '
         log.log.print_error(f"Failed to fetch data for CVE: {cve_id}")
         return None
     
-BASE_CVEDETAILS_URL = "https://www.cvedetails.com/cve"
-    # DEPRECATED--------------------------------------------------------
-def fetch_cvedetails_data(cve_id: str):
-    '''
-    !DEPRECATED!
-    Method to fetch CVE data from CVEDetails and parse the data for kev data and other data as secondary source for enrichment intel.
-    
-    Args:
-        cve_id (str): CVE_ID to query for
-        
-    Returns:
-        result (Dict): {cve_id: True/False, "cvss_vector": cvss_vector}
-    '''
-    url = f"{BASE_CVEDETAILS_URL}/{cve_id}"
-    headers = {
-        "User-Agent": "VulnParse-PinV1.0/Dev"
-    }
-    # Attempt to retrieve CVE_Details page for CVEID
-    try:
-        time.sleep(1)
-        session = requests.Session()
-        response = session.get(url, headers=headers, timeout=5, allow_redirects=False)
-        response.raise_for_status()
-        
-        # Parse HTML content
-        soup = BeautifulSoup(response.content, "html.parser")
-        
-        result = {cve_id: False, "cvss_vector": None}
-        # Check for presence of "Known-Exploited" or KEV-related info
-        kev_status = soup.find_all(string="Known Exploited")
-        if kev_status:
-            result[cve_id] = True
-            log.log.print_success(f"[CVE_DETAILS] Found CISA KEV Entry for {cve_id}")
-        else:
-            log.log.print_error(f"[CVE_DETAILS] CISA KEV NOT FOUND for {cve_id}")
-            
-        
-        # Check for presence of CVSS Vector and save to variable.
-        cvss_regex = re.compile(CVSS3_REGEX_L)
-        cvss_vector = soup.find(string=cvss_regex)
-        
-        if cvss_vector:
-            cvss_vector = cvss_vector.strip()
-            result["cvss_vector"] = cvss_vector
-            log.log.print_success(f"[CVE_DETAILS] Found CVSS Vector for {cve_id}: {cvss_vector}")
-        else:
-            log.log.print_error(f"[CVE_DETAILS] CVSS VECTOR NOT FOUND for {cve_id}")
-        
-        return result
-    
-    except requests.exceptions.RequestException as e:
-        log.log.logger.exception(f"Error fetching CVE details for {cve_id}: {e}")
-        log.log.print_error(f"Error fetching CVE Details for {cve_id}")
-        return None
     
 def update_enrichment_status(finding):
     if finding.exploit_available or finding.epss_score or finding.cisa_kev:
@@ -452,14 +399,31 @@ def resolve_cvss_vector(scanner_vector: str, auth_cve: str, nvd_cache: dict, cur
     3. If only a base score exists, return scoreonly
     4. Othewise mark as Attempted_NotFound sentinel.
     """
+    version = detect_cvss_version(scanner_vector)
+    
     # Case 1: Trust scanner vector if valid
-    if scanner_vector and is_valid_cvss_vector(scanner_vector):
-        base_score = parse_cvss_vector(scanner_vector)[0]
-        if abs(base_score - current_score) > 0.1:
-            log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Score mismatch (scanner {base_score} vs stored {current_score}), reconciling...")
-            current_score = base_score
-        log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Using valid scanner vector: {scanner_vector}")
-        return scanner_vector, current_score
+    if scanner_vector and version in ("v2", "v3"):
+        # If CVSSv3 vector, send it to parser and reconcile score.
+        if version == "v3":
+            try:
+                base_score = parse_cvss_vector(scanner_vector)[0]
+            except Exception as e:
+                log.log.print_error(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Error parsing CVSS v3 vector '{scanner_vector}': {e}. "
+                                    f"Keeping existing score {current_score}")
+                log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Using scanner vector without recalculated score: {scanner_vector}")
+                return scanner_vector, current_score
+            
+            if abs(base_score - current_score) > 0.1:
+                log.log.print_warning(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Score mismatch (scanner {base_score} vs stored {current_score}), reconciling...")
+                current_score = base_score
+            log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL} Using valid scanner CVSS V3 vector: {scanner_vector}")
+            return scanner_vector, current_score
+        # v2: Don't feed into CVSS3 Lib - trust scanner score.
+        if version == "v2":
+            log.log.print_success(f"{Fore.LIGHTMAGENTA_EX}[CVSSVector]{Style.RESET_ALL}"
+                                  f"Using scanner CVSS v2 vector: {scanner_vector} (score={current_score})")
+            #TODO: LAter plug in a CVSS2 Vector parser
+            return scanner_vector, current_score
     
     # Case 2: Fallback to NVD
     if nvd_cache and auth_cve:
