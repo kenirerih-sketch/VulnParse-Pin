@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "VulnParse-Pin"
+description = "Vulnerability report parser + enrichment + triage engine."
+dynamic = ["version"]
+requires-python = ">=3.11"
+authors = [
+    {name = "Shade216"}
+]
+dependencies = ["defusedxml", "cvss", "requests", "ruamel.yaml", "platformdirs"]
+readme = "README.md"
+license = { text = "AGPL-3.0-or-later" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Development Status :: 5 - Production/Stable",
+    "Natural Language :: English",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)"
+]
+keywords = ["vulnparse", "vm", "vulnerability-management", "security-tools", "security", "defensive-security"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+sbom = ["cyclonedx-bom"]
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "vulnparse_pin.__version__" }
+
+[project.scripts]
+vulnparse-pin = "vulnparse_pin.main:main"

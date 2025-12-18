@@ -1,5 +1,5 @@
 
-from utils.csv_exporter import (_sanitize_csv_cell, _sanitize_csv_row)
+from vulnparse_pin.utils.csv_exporter import (_sanitize_csv_cell, _sanitize_csv_row)
 
 def test_sanitize_csv_cell_dangerous_prefix():
     """

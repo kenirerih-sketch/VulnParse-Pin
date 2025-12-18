@@ -1,12 +1,12 @@
 import pytest
-from parsers.openvas_parser import OpenVASParser
-from utils.logger import LoggerWrapper
+from vulnparse_pin.parsers.openvas_parser import OpenVASParser
+from vulnparse_pin.utils.logger import LoggerWrapper
 
 pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated after parser architecture refactor.")
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    import utils.logger_instance as log
+    import vulnparse_pin.utils.logger_instance as log
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("PyTest logging initialized")

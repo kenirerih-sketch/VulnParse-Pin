@@ -1,0 +1,10 @@
+defusedxml
+cvss
+requests
+ruamel.yaml
+
+[dev]
+pytest
+
+[sbom]
+cyclonedx-bom

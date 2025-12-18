@@ -7,3 +7,5 @@ data/
 nvd_cache/
 tests_output/
 logs/
+!config/**
+.history/

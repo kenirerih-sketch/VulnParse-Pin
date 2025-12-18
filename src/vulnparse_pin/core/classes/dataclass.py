@@ -1,0 +1,103 @@
+# VulnParse-Pin – Vulnerability Parsing and Triage Engine
+# Copyright (C) 2025 Shade216
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+#  any later version.
+# See the LICENSE file for full terms.
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+
+from vulnparse_pin.core.apppaths import AppPaths
+from vulnparse_pin.io.pfhandler import PermFileHandler
+from vulnparse_pin.utils.logger import LoggerWrapper
+
+@dataclass
+class Finding:
+    """
+    Finding class for VPP's result objects.
+    """
+    vuln_id: str
+    title: str
+    description: str
+    severity: str
+    cves: List[str]
+    cvss_score: Optional[float] = field(default_factory=float)
+    epss_score: Optional[float] = None
+    cisa_kev: Optional[bool] = False
+    cvss_vector: Optional[str] = None
+    exploit_available: Optional[bool] = False
+    exploit_references: Optional[List[Dict]] = None
+    raw_risk_score: Optional[float] = None
+    risk_score: Optional[float] = None
+    risk_band: Optional[str] = None
+    affected_port: Optional[int] = None
+    protocol: Optional[str] = None
+    detection_plugin: Optional[str] = None
+    plugin_output: Optional[str] = None
+    plugin_evidence: Optional[List[str]] = None
+    solution: Optional[str] = None
+    references: Optional[List[str]] = field(default_factory=list)
+    triage_priority: Optional[str] = None
+    enriched: Optional[bool] = False
+    enrichment_source_cve: Optional[str] = None
+    assetid: Optional[str] = None
+
+@dataclass
+class Asset:
+    """
+    Asset class for VPP's result objects.
+    """
+    hostname: str
+    ip_address: str
+    criticality: Optional[str] = None
+    avg_risk_score: Optional[float] = None
+    os: Optional[str] = None
+    findings: List[Finding] = field(default_factory=list)
+    shodan_data: Optional[dict] = None
+
+
+@dataclass
+class ScanMetaData:
+    """
+    Encompasses Scan Metadata for VPP's result objects.
+    """
+    source: str
+    scan_date: datetime
+    asset_count: int
+    vulnerability_count: int
+    parsed_at: Optional[str] = None
+    source_file: Optional[str] = None
+    scan_name: Optional[str] = None
+
+
+@dataclass
+class ScanResult:
+    """
+    Complete ScanResult object encompassing Metadata and Scan Data.
+    """
+    scan_metadata: ScanMetaData
+    assets: List[Asset] = field(default_factory=list)
+
+
+@dataclass
+class TriageConfig:
+    """
+    Config class object that holds values that define thresholds for High or Critical ratings.
+    """
+    critical_score: float = 9.0 # CVSS >= this -> crit
+    high_epss_score: float = 0.7 # EPSS >= this + High sev -> crit
+    exploit_floor_score: float = 7.5 # Min raw score if exploit w/o CVSS
+    balanced: bool = True # Prof togg
+
+@dataclass(frozen=True)
+class RunContext:
+    """
+    Centralized runtime context object.
+    """
+    paths: AppPaths
+    pfh: PermFileHandler
+    logger: Any

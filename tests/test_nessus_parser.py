@@ -1,14 +1,14 @@
 import pytest
-from parsers.nessus_parser import NessusParser
-from classes.dataclass import ScanResult, Asset
-from utils.logger import LoggerWrapper
+from vulnparse_pin.parsers.nessus_parser import NessusParser
+from vulnparse_pin.core.classes.dataclass import ScanResult, Asset
+from vulnparse_pin.utils.logger import LoggerWrapper
 from typing import Any
 
 pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated after parser architecture refactor.")
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    import utils.logger_instance as log
+    import vulnparse_pin.utils.logger_instance as log
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("Pytest logging initialized.")

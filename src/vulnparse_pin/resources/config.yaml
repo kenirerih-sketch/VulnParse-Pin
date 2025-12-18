@@ -1,0 +1,16 @@
+nvd:
+  enabled: true
+  start_year: 2020
+  end_year: 2025
+  refresh_interval_days: 1
+
+feed_cache:
+  exploit_db: 24
+  kev: 24
+  epss: 6
+
+path_policy:
+  logs_dir: logs
+  cache_dir: data
+  output_dir: output
+  #TODO: Add nvd_cache
