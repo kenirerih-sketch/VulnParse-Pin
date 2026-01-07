@@ -123,6 +123,24 @@ class FeedSpec:
     label: str
     sha256_suffix: str = ".sha256"
     meta_suffix: str = ".meta.json"
+    ttl_seconds: int | None = None
+    ttl_hours_value: float | None = None
+
+    @property
+    def ttl_hours(self) -> float:
+        """
+        Backwards-Compatible TTL accessor used by FeedCacheManager.
+        Returns a float hour value.
+        
+        :return: Hours value
+        :rtype: float
+        """
+        if hasattr(self, "ttl_hours_value") and self.ttl_hours_value is not None:
+            return float(self.ttl_hours_value)
+        if hasattr(self, "ttl_hours") and self.ttl_seconds is not None:
+            return float(self.ttl_seconds) / 3600
+        # Default TTL if not configured
+        return 24.0
 
 @dataclass(frozen = True)
 class FeedCachePolicy:

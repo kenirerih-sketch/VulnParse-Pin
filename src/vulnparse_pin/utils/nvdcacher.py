@@ -10,10 +10,13 @@ from __future__ import annotations
 import gzip
 import json
 from datetime import datetime
-from typing import Any, Dict, List, TYPE_CHECKING
+import re
+from typing import Any, Dict, List, TYPE_CHECKING, Optional, Set
 
 if TYPE_CHECKING:
     from vulnparse_pin.core.classes.dataclass import RunContext
+
+_YEAR_KEY_RE = re.compile(r"^nvd\.year\.(\d{4})$")
 
 class NVDFeedCache:
     '''
@@ -27,11 +30,18 @@ class NVDFeedCache:
         self.ctx = ctx
         self.lookup: Dict[str, Dict[str, Any]] = {}
 
-    def refresh(self, *, config: dict, feed_cache, refresh_cache: bool, offline: bool) -> None:
+    def refresh(self, *, config: dict, feed_cache, refresh_cache: bool, offline: bool, years: Optional[Set[int]] = None, include_modified: bool = True) -> None:
         feeds = nvd_feed_plan(config)
+
         if not feeds:
             self.ctx.logger.print_info("NVD disabled via config.")
             return
+
+        if years is not None:
+            feeds = self._filter_feeds_by_years(feeds, years, include_modified=include_modified)
+            if not feeds:
+                self.ctx.logger.info("Enabled, but no feeds selected by plan; skipping...", extra={"vp_label": "NVD Feed Loader"})
+                return
 
         missing: List[str] = []
 
@@ -58,7 +68,6 @@ class NVDFeedCache:
     def _parse_feed(self, path: str) -> None:
         """Parse NVD 2.0 feed into lookup dict."""
         ctx = self.ctx
-        path = ctx.pfh.ensure_readable_file(path, label = "NVD Feed (.json.gz)")
         with ctx.pfh.open_for_read(path, mode="rb", label = "NVD Feed (.json.gz)") as raw:
             with gzip.open(raw, mode="rt", encoding="utf-8") as f:
                 data = json.load(f)
@@ -131,6 +140,22 @@ class NVDFeedCache:
         merged = {**default_record, **record}
         merged["found"] = True
         return merged
+
+    def _filter_feeds_by_years(self, feeds: List[Dict], years: Set[int], *, include_modified: bool) -> List[Dict]:
+        output: List[Dict] = []
+        for f in feeds:
+            key = str(f.get("key", ""))
+
+            if key == "nvd.modified":
+                if include_modified:
+                    output.append(f)
+                continue
+
+            m = _YEAR_KEY_RE.match(key)
+            if m and int(m.group(1)) in years:
+                output.append(f)
+
+        return output
 
 def _cfg_get(config: Dict[str, Any], path: List[str], default = None):
     cur = config

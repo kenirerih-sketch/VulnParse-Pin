@@ -9,15 +9,15 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import json
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import ipaddress
-
+from collections import Counter, defaultdict
 from vulnparse_pin.core.classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
 from vulnparse_pin.parsers.base_parser import BaseParser
-from vulnparse_pin.utils.normalizer import *
-from collections import Counter, defaultdict
-import vulnparse_pin.utils.logger_instance as log
+from vulnparse_pin.utils.normalizer import coerce_float, coerce_int, coerce_ip, coerce_list, coerce_list_of_strs, coerce_protocol, coerce_severity, coerce_str
+
+
 if TYPE_CHECKING:
     from vulnparse_pin.core.classes.dataclass import RunContext
 
@@ -168,7 +168,6 @@ class NessusParser(BaseParser):
                     epss_score=0.0,
                     cisa_kev=False,
                     exploit_available=exploit_available,
-                    risk=risk,
                     triage_priority=None,
                     enriched=False,
                     affected_port=affected_port,
@@ -273,20 +272,20 @@ class NessusParser(BaseParser):
 
     def detect_and_transform_flat_json(self, some_json):
         if isinstance(some_json, list):
-            log.log.print_info("Detected flat list JSON format.")
+            self.ctx.logger.print_info("Detected flat list JSON format.")
             return self.transform_flat_list(some_json)
 
         elif isinstance(some_json, dict):
             if "results" in some_json and isinstance(some_json["results"], list):
-                log.log.print_info("Detected 'results' key with flat list.")
+                self.ctx.logger.print_info("Detected 'results' key with flat list.")
                 return self.transform_flat_list(some_json["results"])
 
             elif "assets" in some_json:
-                log.log.print_info("Detected already normalized schema.")
+                self.ctx.logger.print_info("Detected already normalized schema.")
                 return some_json
             
             elif "scan" in some_json and "hosts" in some_json["scan"]:
-                log.log.print_info("Detected 'scan' top-level key with 'hosts'. Extracting hosts list.")
+                self.ctx.logger.print_info("Detected 'scan' top-level key with 'hosts'. Extracting hosts list.")
                 # Return a normalized dict with "assets" key, mapping hosts to assets for parser.
                 hosts = some_json["scan"]["hosts"]
                 assets_list = []
@@ -313,11 +312,11 @@ class NessusParser(BaseParser):
                 }
 
             else:
-                log.log.print_warning("Unknown dict formation - returning as-is.")
+                self.ctx.logger.print_warning("Unknown dict formation - returning as-is.")
                 return some_json
 
         else:
-            log.log.print_warning("Unrecognized JSON structure - returning as-is.")
+            self.ctx.logger.print_warning("Unrecognized JSON structure - returning as-is.")
             return some_json
         
     # ==========Schema detectors and normalizers=========
@@ -330,7 +329,7 @@ class NessusParser(BaseParser):
                 raise ValueError("Empty list provided - no data to normalize.")
 
         if self.is_nessus_scan_metadata(data):
-            log.log.print_info("Nessus 'scan_metadata' key detected.")
+            self.ctx.logger.print_info("Nessus 'scan_metadata' key detected.")
             return self.normalize_nessus_scan_metadata(data)
         elif self.is_nessus_source_scan_date(data):
             return self.normalize_nessus_source_scan_date(data)
@@ -343,7 +342,7 @@ class NessusParser(BaseParser):
         elif self.is_results_based(data):
             return self.normalize_results_based(data)
         else:
-            log.log.print_warning(f"Unknown JSON structure: top-level keys: {list(data.keys())}")
+            self.ctx.logger.print_warning(f"Unknown JSON structure: top-level keys: {list(data.keys())}")
             return {
                 "source": "Unknown",
                 "scan_date": None
@@ -357,7 +356,7 @@ class NessusParser(BaseParser):
         return isinstance(data, dict) and all(k in data for k in ["source", "scan_date", "report"])
 
     def is_top_level_scan(self, data):
-        log.log.print_info("top-levle-scan detected")
+        self.ctx.logger.print_info("top-levle-scan detected")
         return isinstance(data, dict) and "scan" in data and isinstance(data.get("scan", {}), dict) and "results" in data.get("scan")
 
     def is_assets_based(self, data):

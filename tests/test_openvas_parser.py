@@ -9,7 +9,7 @@ pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated aft
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    import vulnparse_pin.utils.logger_instance as log
+    
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("Pytest logging initialized.")

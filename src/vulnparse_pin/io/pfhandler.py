@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import IO, Optional, Any, Union
+from typing import IO, Literal, Optional, Any, Union
 
 class FilePathError(RuntimeError):
     """Raised when a path is invalid, missing, or structurally unsafe."""
@@ -39,7 +39,8 @@ class PermFileHandler:
         allowed_roots: Optional[list[PathLike]] = None,
         max_log_path_chars: int = 80,
         hide_home: bool = True,
-        forbid_symlinks: bool = False,
+        forbid_symlinks_read: bool = False,
+        forbid_symlinks_write: bool = True,
         enforce_roots_on_read: bool = False,
         enforce_roots_on_write: bool = True,
         file_mode: Optional[int] = None,
@@ -69,7 +70,8 @@ class PermFileHandler:
 
         self.max_log_path_chars = max_log_path_chars
         self.hide_home = hide_home
-        self.forbid_symlinks = forbid_symlinks
+        self.forbid_symlinks_read = forbid_symlinks_read
+        self.forbid_symlinks_write = forbid_symlinks_write
         self.enforce_roots_on_read = enforce_roots_on_read
         self.enforce_roots_on_write = enforce_roots_on_write
 
@@ -158,7 +160,8 @@ class PermFileHandler:
             f"  Allowed roots               : {roots}\n"
             f"  Enforce on read             : {self.enforce_roots_on_read}\n"
             f"  Enforce on write            : {self.enforce_roots_on_write}\n"
-            f"  Forbid symlinks             : {self.forbid_symlinks}\n"
+            f"  Forbid symlinks on Read     : {self.forbid_symlinks_read}\n"
+            f"  Forbid symlinks on Write    : {self.forbid_symlinks_write}\n"
             f"  POSIX file mode             : {oct(self.file_mode) if self.file_mode is not None else "None"}\n"
             f"  POSIX dir mode              : {oct(self.dir_mode) if self.dir_mode is not None else "None"}\n"
         )
@@ -177,12 +180,12 @@ class PermFileHandler:
             self._assert_within_roots(p, label)
             self._assert_parent_within_roots(p, label)
 
-        self._assert_not_forbidden_symlink(p, label)
+        self._assert_not_forbidden_symlink(p, label, op = "read")
 
         if not p.exists():
             raise FilePathError(f"{label.capitalize()} does not exists: {self.format_for_log(p)}")
 
-        if self.forbid_symlinks and p.is_symlink():
+        if self.forbid_symlinks_read and p.is_symlink():
             raise FilePathError(f"{label.capitalize()} is a forbidden symlink: {self.format_for_log(p)}")
 
         if not p.is_file():
@@ -192,7 +195,7 @@ class PermFileHandler:
             raise FilePermissionError(f"{label.capitalize()} is not readable: {self.format_for_log(p)}")
 
         if log:
-            self.logger.info(
+            self.logger.debug(
                 "Validated readable %s: %s",
                 label,
                 self.format_for_log(p),
@@ -209,12 +212,12 @@ class PermFileHandler:
         if self.enforce_roots_on_read:
             self._assert_within_roots(p, label)
 
-        self._assert_not_forbidden_symlink(p, label)
+        self._assert_not_forbidden_symlink(p, label, op = "read")
 
         if not p.exists():
             raise FilePathError(f"{label.capitalize()} does not exist: {self.format_for_log(p)}")
 
-        if self.forbid_symlinks and p.is_symlink():
+        if self.forbid_symlinks_read and p.is_symlink():
             raise FilePathError(f"{label.capitalize()} is a forbidden symlink: {self.format_for_log(p)}")
 
         if not p.is_dir():
@@ -224,7 +227,7 @@ class PermFileHandler:
             raise FilePermissionError(f"{label.capitalize()} is not accessible: {self.format_for_log(p)}")
 
         if log:
-            self.logger.info(
+            self.logger.debug(
                 "Validated readable %s: %s",
                 label,
                 self.format_for_log(p),
@@ -253,7 +256,7 @@ class PermFileHandler:
 
         parent = p.parent
 
-        self._assert_not_forbidden_symlink(parent, f"{label} parent directory")
+        self._assert_not_forbidden_symlink(parent, f"{label} parent directory", op = "write")
 
 
         if not parent.exists():
@@ -269,7 +272,7 @@ class PermFileHandler:
             else:
                 raise FilePathError(f"Parent directory does not exist for {label}: {self.format_for_log(parent)}")
 
-        if self.forbid_symlinks and parent.is_symlink():
+        if self.forbid_symlinks_write and parent.is_symlink():
             raise FilePathError(f"Parent directory is a forbidden symlink for {label}: {self.format_for_log(parent)}")
 
         if not os.access(parent, os.W_OK | os.X_OK):
@@ -278,7 +281,7 @@ class PermFileHandler:
         if p.exists() and not overwrite:
             raise FilePathError(f"{label.capitalize()} already exists and overwrite=False: {self.format_for_log(p)}")
 
-        if self.forbid_symlinks and p.exists() and p.is_symlink():
+        if self.forbid_symlinks_write and p.exists() and p.is_symlink():
             raise FilePathError(f"{label.capitalize()} is a forbidden symlink: {self.format_for_log(p)}")
 
         if log:
@@ -292,14 +295,14 @@ class PermFileHandler:
     # Safe open managers
     # -------------------------
 
-    def open_for_read(self, path: PathLike, mode: str = "r", encoding: Optional[str] = "utf-8", *, label: str = "file") -> IO[Any]:
+    def open_for_read(self, path: PathLike, mode: str = "r", encoding: Optional[str] = "utf-8", *, label: str = "file", log: bool = True) -> IO[Any]:
         """
         Safe wrapper around open() for reading.
         """
         if any(c in mode for c in ("w", "a", "+")):
             raise ValueError("open_for_read() must not be used with write/append mode.")
 
-        p = self.ensure_readable_file(path, label=label, log=True)
+        p = self.ensure_readable_file(path, label=label, log=log)
 
         try:
             if 'b' in mode:
@@ -387,12 +390,24 @@ class PermFileHandler:
         parent = p.parent
         self._assert_within_roots(parent, f"{label} parent directory")
 
-    def _assert_not_forbidden_symlink(self, p: Path, label: str) -> None:
-        if self.forbid_symlinks and p.is_symlink():
-            raise FilePathError(
-                f"{label.capitalize()} is a forbidden symlink.\n"
-                f"  Resolved path : {p}"
-            )
+    def _assert_not_forbidden_symlink(self, p: Path, label: str, op: Literal["read", "write"]) -> None:
+        forbid = self.forbid_symlinks_read if op == "read" else self.forbid_symlinks_write
+        if not forbid:
+            return
+
+        parts = list(reversed(p.parents)) + [p]
+        for x in parts:
+            try:
+                if x.is_symlink():
+                    raise FilePathError(
+                        f"{label} contains a forbidden symlink for {op}.\n"
+                        f" Component           : {x}\n"
+                        f" Forbidden component : {x.resolve(strict=False)}"
+                    )
+            except OSError as exc:
+                if op == "write":
+                    raise FilePathError(f"{label} could not be validated for symlinks: {x}") from exc
+                self.logger.debug("Could not validate symlink status for %s (%s): %s", x, label, exc)
 
     def _apply_file_mode(self, p: Path) -> None:
         if self.file_mode is None:

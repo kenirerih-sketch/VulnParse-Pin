@@ -177,8 +177,6 @@ def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
     cfg_path_yaml, cfg_path_json = ensure_user_configs(ctx.paths)
 
     # Enforce PFH policy
-    cfg_path_yaml = ctx.pfh.ensure_readable_file(cfg_path_yaml, label = "Global Config (YAML)")
-    cfg_path_json = ctx.pfh.ensure_readable_file(cfg_path_json, label = "Scoring Config (JSON)")
 
     # YAML INIT
     yaml=YAML(typ = "safe", pure = True)

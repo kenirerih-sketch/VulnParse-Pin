@@ -15,7 +15,7 @@ from defusedxml.ElementTree import fromstring
 from iniconfig import ParseError
 from vulnparse_pin.parsers.base_parser import BaseParser
 from vulnparse_pin.core.classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
-import vulnparse_pin.utils.logger_instance as log
+
 
 
 class NessusXMLParser(BaseParser):
@@ -29,7 +29,7 @@ class NessusXMLParser(BaseParser):
             try:
                 # Size guardrail (Lets do >500MB)
                 if os.path.getsize(filepath) > 500 * 1024 * 1024:
-                    log.log.print_error(f"File supplied exceeds 500MB. This is a mechanism to protect against DOS. File: {filepath}")
+                    self.ctx.logger.print_error(f"File supplied exceeds 500MB. This is a mechanism to protect against DOS. File: {filepath}")
                     return False
                 
                 # Setup Parser

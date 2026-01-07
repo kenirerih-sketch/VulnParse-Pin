@@ -58,7 +58,7 @@ class FeedCacheManager:
         if key.startswith("nvd."):
             return self._resolve_nvd_key(key)
         spec = self.specs[key]
-        data_path = self.cache_dir / spec.filename
+        data_path = self.cache_dir / spec.key / spec.filename
         sha_path = Path(str(data_path) + spec.sha256_suffix) if spec.sha256_suffix else None
         meta_path = Path(str(data_path) + spec.meta_suffix) if spec.meta_suffix else None
 
@@ -80,14 +80,13 @@ class FeedCacheManager:
         if not meta_path.exists():
             return None
         try:
-            meta_path = self.pfh.ensure_readable_file(meta_path, label = f"{key} Meta")
             with self.pfh.open_for_read(meta_path, mode = "r", label = f"{key} Meta") as r:
                 return json.load(r)
         except Exception as e:
             self.logger.print_warning(
                 f"Meta file for {key} is corrupted; ignoring. "
                 f"Path={self.pfh.format_for_log(meta_path)} Trace={e}",
-                label = "[CacheManager]"
+                label = "Cache Manager"
             )
             return None
 
@@ -138,7 +137,7 @@ class FeedCacheManager:
         with self.pfh.open_for_write(meta_path, mode = "w", label = f"{key} Meta") as w:
             w.write(json.dumps(meta, indent=2))
 
-        self.logger.print_success(f"Metadata written: {self.pfh.format_for_log(meta_path)}", label = "[CacheManager]")
+        self.logger.print_success(f"Metadata written: {self.pfh.format_for_log(meta_path)}", label = "Cache Manager")
 
     def update_cache_meta(self, key: str) -> None:
         """
@@ -161,7 +160,7 @@ class FeedCacheManager:
         with self.pfh.open_for_write(meta_path, mode = "w", label = f"{key} Meta") as w:
             w.write(json.dumps(meta, indent=2))
 
-        self.logger.print_success(f"Metadata update written: {self.pfh.format_for_log(meta_path)}", label = "[CacheManger]")
+        self.logger.print_success(f"Metadata update written: {self.pfh.format_for_log(meta_path)}", label = "Cache Manager")
 
     def print_cache_metadata(self, key: str) -> None:
         """
@@ -170,7 +169,7 @@ class FeedCacheManager:
         _, _, meta_path = self.resolve(key)
         meta = self.load_meta(key)
         if not meta:
-            self.logger.print_warning(f"No meta found for '{key}' at {self.pfh.format_for_log(meta_path)}", label = "[CacheManager]")
+            self.logger.print_warning(f"No meta found for '{key}' at {self.pfh.format_for_log(meta_path)}", label = "Cache Manager")
             return
 
         # Safely extract fields to report
@@ -178,12 +177,12 @@ class FeedCacheManager:
         created_at = meta.get("created_at")
 
         if last_updated:
-            self.logger.print_info(f"{meta_path.name} last updated: {meta['last_updated']}", label = "[CacheManager]")
+            self.logger.print_info(f"{meta_path.name} last updated (UTC): {meta['last_updated']}", label = "Cache Manager")
         elif created_at:
-            self.logger.print_info(f"{meta_path.name} created at: {meta['created_at']} (No 'last_updated' yet)", label = "[CacheManager]")
+            self.logger.print_info(f"{meta_path.name} created at: {meta['created_at']} (No 'last_updated' yet)", label = "Cache Manager")
         else:
             # Log warning about feed's meta file
-            self.logger.print_warning(f"Meta file for '{key}' exists, but contains no timestamp fields.")
+            self.logger.print_warning(f"Meta file for '{key}' exists, but contains no timestamp fields.", label = "Cache Manager")
 
     # ----------------- TTL Logic -----------------
     def is_fresh(self, key: str) -> bool:
@@ -223,13 +222,12 @@ class FeedCacheManager:
             return True
 
         age_hours = age.total_seconds() / 3600.0
-        self.logger.logger.debug("'%s' cache age=%sh, ttl=%sh", key, f"{age_hours:.2f}", spec.ttl_hours)
-        return age_hours <= float(spec.ttl_hours)
+        self.logger.debug("'%s' cache age=%sh, ttl=%sh", key, f"{age_hours:.2f}", ttl)
+        return age_hours <= float(ttl)
 
     # ----------------- Checksum Logic -----------------
     def compute_checksum(self, key: str) -> str:
         data_path, _, _ = self.resolve(key)
-        data_path = self.pfh.ensure_readable_file(data_path, label = f"{key} Cache")
         h = hashlib.sha256()
         with self.pfh.open_for_read(data_path, mode = 'rb', label = f"{key} Cache") as f:
             for chunk in iter(lambda: f.read(8192), b""):
@@ -257,7 +255,6 @@ class FeedCacheManager:
 
         # If checksum file exists, Validate the checksum
         if sha_path.exists():
-            sha_path = self.pfh.ensure_readable_file(sha_path, label = f"{key} SHA256")
             with self.pfh.open_for_read(sha_path, mode = "r", label = f"{key} SHA256") as r:
                 expected = r.read().strip().split()[0]
             actual = self.compute_checksum(key)
@@ -265,7 +262,7 @@ class FeedCacheManager:
             # Diff Check
             if expected != actual:
                 if not allow_regen:
-                    self.logger.print_error(f"Checksum mismatch for {data_path.name}", label = "[CacheManager]")
+                    self.logger.print_error(f"Checksum mismatch for {data_path.name}", label = "Cache Manager")
                     # Refuse to use cache on mismatch.
                     raise RuntimeError(
                         f"Checksum mismatch for {data_path.name}. "
@@ -274,7 +271,7 @@ class FeedCacheManager:
                 # Allow_regen = True: offline / recovery mode
                 self.logger.print_warning(f"Checksum mismatch for {data_path.name}. "
                                           f"Regnerating checksum from re-downloaded file contents. "
-                                          f"Integrity vs upstream mirror CANNOT be verified — best-effort cache.")
+                                          f"Integrity vs upstream mirror CANNOT be verified — best-effort cache.", label = "Cache Manager")
                 # Regen Checksum for missing .sha256
                 self._create_cs(key, actual)
                 self.update_cache_meta(key)
@@ -285,14 +282,14 @@ class FeedCacheManager:
                     if cprompt in ("yes", "y"):
                         break
                     elif cprompt in ("no", "n"):
-                        self.logger.print_info("[Enrich-Cache] User chose to abort due to checksum mismatch.", label = "[CacheManager-WARN]")
+                        self.logger.print_info("[Enrich-Cache] User chose to abort due to checksum mismatch.", label = "Cache Manager-WARN")
                         sys.exit(0)
                     else:
-                        self.logger.print_info("[Enrich-Cache] Please answer 'yes' or 'no'.", label = "[CacheManager-WARN]")
+                        self.logger.print_info("[Enrich-Cache] Please answer 'yes' or 'no'.", label = "Cache Manager-WARN")
                 return False
 
             # Checksum matches
-            self.logger.print_success(f"Checksum valid for {spec.label}: {data_path.name}", label = "[CacheManager]")
+            self.logger.print_success(f"Checksum valid for {spec.label}: {data_path.name}", label = "Cache Manager")
             return True
 
         # No .sha256 file present
@@ -311,7 +308,7 @@ class FeedCacheManager:
         # Warn user of Locally generated checksum .sha256. Prompt to continue
         self.logger.print_warning(f"No checksum file found for {data_path.name}. "
                                   f"Generated LOCAL checksum {actual}. "
-                                  f"Integrity vs upstream mirror CANNOT be verified — using best-effort offline cache.", label = "[CacheManager]")
+                                  f"Integrity vs upstream mirror CANNOT be verified — using best-effort offline cache.", label = "Cache Manager")
         # If no, exit. If yes, continue.
         while True:
             cprompt = input("Would you like to continue? (Yes or No): ").strip().lower()
@@ -319,10 +316,10 @@ class FeedCacheManager:
             if cprompt in ("yes", "y"):
                 break
             elif cprompt in ("no", "n"):
-                self.logger.print_info(f"User input: {cprompt}. Exiting...", label = "[CacheMangager-WARN]")
+                self.logger.print_info(f"User input: {cprompt}. Exiting...", label = "Cache Mangager-WARN")
                 sys.exit(0)
             else:
-                self.logger.print_info("Please answer 'yes' or 'no'. ", label = "[CacheManager-WARN]")
+                self.logger.print_info("Please answer 'yes' or 'no'. ", label = "Cache Manager-WARN")
 
         return False
 
@@ -352,7 +349,7 @@ class FeedCacheManager:
         return True
 
     # ----------------- Helpers -----------------
-    def _ttl_hours(self, key: str) -> int:
+    def _ttl_hours(self, key: str) -> float:
         return self.policy.ttl_for(key)
 
     def write_atomic(
@@ -472,7 +469,7 @@ class FeedCacheManager:
         with self.pfh.open_for_write(meta_path, mode = "w", label = f"{spec.label} Meta") as w:
             w.write(json.dumps(meta, indent=2))
 
-        self.logger.print_success(f"Cached {spec.label} at {self.pfh.format_for_log(data_path)}", label = "[CacheManager]")
+        self.logger.print_success(f"Cached {spec.label} at {self.pfh.format_for_log(data_path)}", label = "CacheManager")
         return data_path
 
     def write_atomic_stream_gunzip(
@@ -585,7 +582,7 @@ class FeedCacheManager:
 
         self.logger.print_success(
             f"Cached {spec.label} (decompressed) at {self.pfh.format_for_log(data_path)}",
-            label = "[CacheManager]"
+            label = "CacheManager"
         )
         return data_path
 
@@ -653,7 +650,7 @@ class FeedCacheManager:
             remote_meta = self._parse_nvd_remote_meta(r.text)
         except Exception as e:
             if data_path.exists():
-                self.logger.print_warning(f"Meta fetched failed for {fname}. Using local. Trace={e}", label = "[FeedCacheManager-NVD]")
+                self.logger.print_warning(f"Meta fetched failed for {fname}. Using local. Trace={e}", label = "FeedCacheManager-NVD")
                 return self.pfh.ensure_readable_file(data_path, label = f"NVD Feed Cache ({key})")
             raise
 
@@ -663,7 +660,6 @@ class FeedCacheManager:
         # If local meta exists but remote isn't newer, keep local meta
         if not refresh_cache and data_path.exists() and meta_path.exists() and remote_last:
             try:
-                meta_path2 = self.pfh.ensure_readable_file(meta_path, label = "NVD Feed Meta Sidecar")
                 with self.pfh.open_for_read(meta_path, mode = "r", label = "NVD Feed Meta Sidecar") as f:
                     local_meta = json.load(f)
                 local_remote_last = self._iso_to_dt(local_meta.get("remote_lastModifiedDate"))

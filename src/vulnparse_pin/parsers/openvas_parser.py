@@ -12,7 +12,7 @@ import json
 from datetime import datetime, timezone
 import hashlib
 from vulnparse_pin.utils.cvss_utils import is_valid_cvss_vector
-import vulnparse_pin.utils.logger_instance as log
+
 from typing import Any, Counter, Dict, List, Optional, Union
 from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding
 from vulnparse_pin.parsers.base_parser import BaseParser
@@ -91,7 +91,7 @@ class OpenVASParser(BaseParser):
                 if pattern(data):
                     return True
             except Exception as e:
-                log.log.print_error(f"Pattern check failed: {e}")
+                self.ctx.logger.print_error(f"Pattern check failed: {e}")
                 continue
             
         return False
@@ -236,7 +236,7 @@ class OpenVASParser(BaseParser):
     
     def detect_and_transform_flat_json(self, data: Dict[str, Any]):
         if isinstance(data, dict) and self.get_key_cins(data, ["scan_id", "vulns"]):
-            log.log.print_info("Detected OpenVas flat JSON format w/ 'vulns' list of hosts")
+            self.ctx.logger.print_info("Detected OpenVas flat JSON format w/ 'vulns' list of hosts")
             # Transform flat JSON into standard structure.
             results = []
             hosts = data.get("vulns")
@@ -279,7 +279,7 @@ class OpenVASParser(BaseParser):
                     }
                 }
             else:
-                log.log.print_error("vulns list is empty. Unable to transform schema.")
+                self.ctx.logger.print_error("vulns list is empty. Unable to transform schema.")
                 
         elif (
             isinstance(data, dict)
@@ -294,7 +294,7 @@ class OpenVASParser(BaseParser):
                 for entry in data["results"][:5]
             )
         ):
-            log.log.print_info(f"Detected OpenVAS JSON with flat results list")
+            self.ctx.logger.print_info(f"Detected OpenVAS JSON with flat results list")
             
             results = []
             hosts = data.get("results", [])
@@ -312,7 +312,7 @@ class OpenVASParser(BaseParser):
                             try:
                                 cves = nested_cve.get("cve", [])
                             except Exception as e:
-                                log.log.logger.exception(f"Exception: {e}")
+                                self.ctx.logger.exception(f"Exception: {e}")
                     if cves is not None and cves != "":
                         cves = self.convert_cves_str_list(cves)
                     else:
@@ -349,7 +349,7 @@ class OpenVASParser(BaseParser):
                 }
         # If Flat list with nvt key
         elif isinstance(data, list) and "nvt" in data[0]:
-            log.log.print_info(f"Detected flat list with 'nvt' key.")
+            self.ctx.logger.print_info(f"Detected flat list with 'nvt' key.")
             
             results = []
             
@@ -391,7 +391,7 @@ class OpenVASParser(BaseParser):
                   and any(k in entry for k in ("name", "description", "cve", "cvss_base_vector")) for entry in data["results"][:5]
               )
         ):
-            log.log.print_info("Detected simplified OpenVAS flat JSON (name/desc/cve/cvss format).")
+            self.ctx.logger.print_info("Detected simplified OpenVAS flat JSON (name/desc/cve/cvss format).")
             
             results = []
             for entry in data["results"]:
@@ -402,7 +402,7 @@ class OpenVASParser(BaseParser):
                         try:
                             cves = nested_cve.get("cve", [])
                         except Exception as e:
-                            log.log.logger.exception(f"Exception while extraction nested CVE: {e}")
+                            self.ctx.logger.exception(f"Exception while extraction nested CVE: {e}")
                 cves = self.convert_cves_str_list(cves) if cves else []
                 
                 result_item = {
@@ -432,7 +432,7 @@ class OpenVASParser(BaseParser):
             
                 
         else:
-            log.log.print_warning("Unknown dict formation - returning as-is.")
+            self.ctx.logger.print_warning("Unknown dict formation - returning as-is.")
             return data
     
     # Big Normalizer
@@ -583,7 +583,7 @@ class OpenVASParser(BaseParser):
         
         for host in hosts:
             if not isinstance(host, dict):
-                log.log.logger.warning(f"[Normalizer_GSA_WEB_UI] Host entry is not a dictionary... Skipping")
+                self.ctx.logger.warning(f"[Normalizer_GSA_WEB_UI] Host entry is not a dictionary... Skipping")
                 continue
             
             severity = host.get("severity", "N/A")
@@ -624,7 +624,7 @@ class OpenVASParser(BaseParser):
             hosts = [hosts]
         
         elif not isinstance(hosts, list):
-            log.log.logger.warning("[OMPNormalizer] Malformed results structure. Skipping...")
+            self.ctx.logger.warning("[OMPNormalizer] Malformed results structure. Skipping...")
             return {
                 "report": {
                     "scan_start": scan_start,
@@ -698,7 +698,7 @@ class OpenVASParser(BaseParser):
         elif isinstance(tags, list):
             pairs = tags
         else:
-            log.log.print_warning(f"[parse_cvss_score] Unexpected type for tags: {type(tags)}")
+            self.ctx.logger.print_warning(f"[parse_cvss_score] Unexpected type for tags: {type(tags)}")
             return 0.0
         
         
@@ -712,8 +712,8 @@ class OpenVASParser(BaseParser):
                 try:
                     return float(val)
                 except ValueError:
-                    log.log.print_error(f"[parse_cvss_score] Value Error occured while converting {val}")
-                    log.log.logger.exception("ValueError Exception")
+                    self.ctx.logger.print_error(f"[parse_cvss_score] Value Error occured while converting {val}")
+                    self.ctx.logger.exception("ValueError Exception")
                     return 0.0
 
         return 0.0
@@ -749,7 +749,7 @@ class OpenVASParser(BaseParser):
             elif isinstance(vuln_id, str) and vuln_id.strip():
                 return [c.strip() for c in vuln_id.split(",") if c.strip()][0]
         except (ValueError, IndexError, KeyError, TypeError) as e:
-            log.log.print_error(f"Error when retrieving vuln_id: {e}.")
+            self.ctx.logger.print_error(f"Error when retrieving vuln_id: {e}.")
         
         host = item.get("host", "unknown_host")
         port = item.get("port", "unknown_port")
@@ -757,7 +757,7 @@ class OpenVASParser(BaseParser):
         
         data_to_hash = f"{host}:{port}:{title}"
         
-        log.log.print_info(f"No vuln_id found - generating fallback hash for {host}:{port}:{title}")
+        self.ctx.logger.print_info(f"No vuln_id found - generating fallback hash for {host}:{port}:{title}")
         
         hashed_fb = hashlib.sha256(data_to_hash.encode('utf-8')).hexdigest()[:12]
         
@@ -778,7 +778,7 @@ class OpenVASParser(BaseParser):
             
             for key, value in data.items():
                 if key == target_key:
-                    log.log.logger.debug(f"[detect_nested_key]Nested Key: {target_key} Found")
+                    self.ctx.logger.debug(f"[detect_nested_key]Nested Key: {target_key} Found")
                     return data
                 result = self.detect_nested_key(value, target_key)
                 if result:

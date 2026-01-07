@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 from dataclasses import asdict
 from typing import Any, Optional, Sequence, Type
+import os
 from vulnparse_pin.core.classes.dataclass import FeedCachePolicy, FeedSpec, RunContext, ScanResult, Services
 from vulnparse_pin.utils.enricher import enrich_scan_results, load_epss, load_kev, update_enrichment_status
 import argparse
@@ -21,12 +22,11 @@ from vulnparse_pin.utils.banner import print_banner
 from vulnparse_pin.utils.exploit_enrichment_service import load_exploit_data
 from vulnparse_pin.utils.feed_cache import FeedCacheManager
 from vulnparse_pin.utils.logger import LoggerWrapper
-import vulnparse_pin.utils.logger_instance as log
-import os
-from vulnparse_pin.parsers.__init__ import parsers
+from vulnparse_pin.parsers.__init__ import PARSER_SPECS
 from vulnparse_pin.utils.exploit_enrichment_service import *
+from vulnparse_pin.utils.schema_detector import SchemaDetector
 from vulnparse_pin.utils.validations import *
-from vulnparse_pin.utils.nvdcacher import NVDFeedCache
+from vulnparse_pin.utils.nvdcacher import NVDFeedCache, nvd_policy_from_config
 from vulnparse_pin.utils.enrichment_stats import stats
 from vulnparse_pin.io.pfhandler import PathLike, PermFileHandler
 from vulnparse_pin.utils.csv_exporter import export_to_csv
@@ -35,8 +35,9 @@ from vulnparse_pin import __version__
 
 KEV_FEED = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 EPSS_FEED = "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz"
+NVD_MIN_YEAR = 2002
 
-def print_summary_banner(scan_result, output_file=None, sources=None):
+def print_summary_banner(ctx: "RunContext", scan_result, output_file=None, sources=None):
     '''
     Prints a formatted summary banner with key metrics from the scan result.
     
@@ -133,8 +134,8 @@ def print_summary_banner(scan_result, output_file=None, sources=None):
 
     print("="*60 + "\n")
 
-    logger.info(f"Assets Analyzed: {total_assets:,}," 
-                f"Findings Triaged: {total_findings:,}," 
+    ctx.logger.info(f"Assets Analyzed: {total_assets:,},"
+                f"Findings Triaged: {total_findings:,},"
                 f"Average Risk Score: {avg_risk_score:.2f},"
                 f"Highest Risk Asset: {highest_risk_asset.hostname if highest_risk_asset else 'N/A'},"
                 f"Critical+: {critical_findings:,}, High: {high_findings:,}, Medium: {medium_findings:,}, Low: {low_findings:,}"
@@ -183,7 +184,7 @@ def parse_mode(value: str) -> int:
 
     return mode
 
-def write_output(data: Dict, file_path: PathLike, pretty_print=False):
+def write_output(ctx: "RunContext", data: Dict, file_path: PathLike, pretty_print=False):
     '''
     Function to handle file writing operations for JSON results with the option of pretty printing JSON if the --pretty-print argument is True.
 
@@ -197,21 +198,21 @@ def write_output(data: Dict, file_path: PathLike, pretty_print=False):
     '''
     with open(file_path, 'w', encoding='utf-8') as f:
         if pretty_print:
-            logger.print_info("Pretty-printing JSON - Standby...")
+            ctx.logger.print_info("Pretty-printing JSON - Standby...", label = "Output")
             try:
                 json.dump(asdict(data), f, indent=4)
-                logger.print_success(f"Parsed results are stored in: {file_path}")
+                ctx.logger.print_success(f"Parsed results are stored in: {file_path}", label = "Output")
             except Exception as e:
-                logger.print_error(f"Error attempt to dump to JSON: {e}")
+                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label = "Output")
                 sys.exit(1)
         else:
             try:
-                logger.print_info("[*] Dumping JSON results...")
+                ctx.logger.print_info("[*] Dumping JSON results...")
                 json.dump(asdict(data), f)
-                logger.print_success(f"JSON results available in: {file_path}")
+                ctx.logger.print_success(f"JSON results available in: {file_path}", label = "Output")
             except Exception as e:
-                logger.print_error(f"Error attempt to dump to JSON: {e}")
-                logger.logger.exception("Exception: %s", e)
+                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label = "Output")
+                ctx.logger.exception("Exception: %s", e)
                 sys.exit(1)
 
 def valid_input_file(path: PathLike) -> Path:
@@ -228,43 +229,36 @@ def valid_log_level(level):
         raise argparse.ArgumentTypeError(f"Invalid log level '{level}. Choce from {levels}.")
     return lvl
 
-def detect_parser(ctx: "RunContext", filepath: PathLike):
-    """
-    Detects and returns the correct parser class for given input.
-    Uses detect_file() for lightweight header sniffing.
-    """
-    for parser_cls in parsers:
-        try:
-            if parser_cls.detect_file(filepath):
-                ctx.logger.print_success(f"Detected parser for structure: {parser_cls.__name__}", label = "Normalization")
-                return parser_cls
-        except Exception:
-            ctx.logger.debug("Parser detect failed: '%s'", parser_cls.__name__, exc_info=True)
-            continue
-    raise ValueError(f"No parser matched input: {filepath.name if isinstance(filepath, Path) else filepath}")
-
-
-def force_under_root(root: Path, candidate: os.PathLike) -> Path:
-    """
-    Forces candidate file to live under designated root.
-    """
-    c = Path(candidate)
-    if not c.is_absolute() and len(c.parts) == 1:
-        return root / c
-    return c
-
-def load_and_parse(ctx: "RunContext", filepath: PathLike) -> ScanResult:
-    """
-    Detect parser, parse the file, and return ScanResult object.
-    """
-    parsercls = detect_parser(ctx, filepath)
-    if parsercls:
-        parser = parsercls(ctx)
-        scan_result = parser.parse(filepath)
-        return scan_result
+def extract_cve_years(ctx: "RunContext", scan_result: ScanResult) -> set[int]:
+    _CVE_RE = re.compile(r"^CVE-(\d{4})-\d+$", re.IGNORECASE)
+    years: set[int] = set()
+    for asset in scan_result.assets:
+        for f in asset.findings:
+            for cve in (f.cves or []):
+                m = _CVE_RE.match(str(cve).strip())
+                if m:
+                    years.add(int(m.group(1)))
+    if (len(years) < 1):
+        ctx.logger.debug("No CVEs could properly be extracted from the input file. Years is None; Years: %s", years, extra={"vp_label": "CVE Year Extraction"})
     else:
-        ctx.logger.print_error(f"Failure attemping to parse {filepath.name}", label = "Normalization")
-        raise RuntimeError
+        ctx.logger.debug("Years seen: %s", years, extra={"vp_label": "CVE Year Extraction"})
+    return years
+
+def select_years(ctx: "RunContext", years_seen: set[int]) -> set[int]:
+    normalized_years: set[int] = set()
+
+    for y in years_seen:
+        if y < NVD_MIN_YEAR:
+            y = NVD_MIN_YEAR
+            normalized_years.add(y)
+        normalized_years.add(y)
+    # dedup the years
+    if normalized_years:
+        ctx.logger.debug("Normalized years: %s", normalized_years, extra={"vp_label": "CVE Year Normalization"})
+        return normalized_years
+    else:
+        raise RuntimeError("Unable to normalize years. Killswitching for failure mode.")
+
 
 # Resolve feed sources.
 def resolve_feed_path(arg_val, offline_mode: bool, default_online: PathLike, default_offline: PathLike) -> Any | str:
@@ -307,7 +301,7 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--file", "-f", help="Path to vulnerability scan file", required=True, type=valid_input_file)
     parser.add_argument("--enrich-kev", "-kev", nargs="?", help="Path/URL to CISA KEV JSON or JSON.gz file. If omitted, uses official CISA KEV feed.")
     parser.add_argument("--enrich-epss", "-epss", nargs="?", help="Path/URL to EPSS .csv or CSV.gz file. If omitted, use official EPSS feed.")
-    parser.add_argument("--output", "-o", default="VP_triage_results.json", metavar="FILE", help="File to output results to. Output is in JSON")
+    parser.add_argument("--output", "-o", metavar="FILE", help="File to output results to. Output is in JSON")
     parser.add_argument("--pretty-print", "-pp", action="store_true", help="Output the JSON results with identation for readability to cli")
     parser.add_argument("--log-file", default="vulnparse_pin.log", help="Log File destination.")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], help="Sets Logging level for log.", type=valid_log_level)
@@ -317,13 +311,15 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--enrich-exploit", "-ex", action="store_true", help="Enrich findings with exploit availability info.")
     parser.add_argument("--mode", choices=["online", "offline"], default="online", help="Set to 'offline' to disable epss and kev external enrichment requests and use local cache only.")
     parser.add_argument("--refresh-cache", action="store_true", help="Forces cache refesh for feeds.")
+    parser.add_argument("--allow_regen", action="store_true", help="Allows regeneration of cache meta and checksum if missing using 'best-effort'. Default: True", default=True)
     parser.add_argument("--no-nvd", action="store_true", help="Disables NVD Enrichment module[No NVD enrichment processing]")
     parser.add_argument("--output-csv", type=str, metavar="PATH", help="Path to save enriched results in CSV format (optional)")
-    parser.add_argument("--allow-large", action="store_true", help="Allow parsing very large reports (up to ~50GB). Use only for enterprise-scale or synthetic stress tests.")
-    parser.add_argument("--no-csv-sanitize", action="store_true", help="Disable CSV cell sanitization (dangerous: may allow CSV formula injection in spreadsheet tools)")
-    parser.add_argument("--forbid-symlinks", "-fbs", action="store_true", help="Disables following symlinks when resolving paths.")
+    parser.add_argument("--allow-large", action="store_true", help="Allow parsing very large reports (up to ~50GB). Use only for enterprise-scale or synthetic stress tests. Default: False")
+    parser.add_argument("--no-csv-sanitize", action="store_true", help="Disable CSV cell sanitization (dangerous: may allow CSV formula injection in spreadsheet tools). Default: Off")
+    parser.add_argument("--forbid-symlinks_read", "-fbsr", action="store_true", default=False, help="Disables following symlinks when resolving paths during read operations.")
+    parser.add_argument("--forbid-symlinks_write", "-fbsw", action="store_true", default=True, help="Disables following symlinks when resolving paths during write operations.")
     parser.add_argument("--enforce-root-read", "-err", action="store_true", help="Enforces read operations only on files located within the list of acceptable roots.")
-    parser.add_argument("--enforce-root-write", "-erw", default=True, help="Enforces write operations only on files located within the list of acceptable roots.")
+    parser.add_argument("--enforce-root-write", "-erw", action="store_true", default=True, help="Enforces write operations only on files located within the list of acceptable roots. Default: True")
     parser.add_argument("--file-mode", "-fm", type=parse_mode, default=0o700, nargs=1, metavar="0o700", help="POSIX ONLY - Enables file-level chmod permissions on file write operations.")
     parser.add_argument("--dir-mode", "-dm", type=parse_mode, default=0o760, nargs=1, metavar="0o760", help="POSIX ONLY - Enables file-level chmod permissions on file write operations.")
     parser.add_argument("--debug-path-policy", action="store_true", help="Display path policy for PFHandler and exit.")
@@ -341,7 +337,7 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[Sequence[str]] = None):
-
+    start_time = time.time()
     args = get_args(argv)
 
     # Paths
@@ -356,6 +352,7 @@ def main(argv: Optional[Sequence[str]] = None):
     bootstrap_log = paths.log_dir / "bootstrap.log"
     logwrap = LoggerWrapper(str(bootstrap_log), log_level=args.log_level)
     logger = logwrap
+    logger.print_info("Starting up VulnParse-Pin...", f"VulnParse-Pin {__version__}")
     
     # -------------------------------------
     #   Init PFH
@@ -367,11 +364,12 @@ def main(argv: Optional[Sequence[str]] = None):
             paths.config_dir,
             paths.cache_dir,
             paths.log_dir,
-            paths.output_dir
+            paths.output_dir,
             ],
         max_log_path_chars = 25,
         hide_home = True,
-        forbid_symlinks = args.forbid_symlinks,
+        forbid_symlinks_read = args.forbid_symlinks_read,
+        forbid_symlinks_write = args.forbid_symlinks_write,
         enforce_roots_on_read = args.enforce_root_read,
         enforce_roots_on_write = args.enforce_root_write,
         file_mode = args.file_mode,
@@ -414,15 +412,16 @@ def main(argv: Optional[Sequence[str]] = None):
     feed_cache = FeedCacheManager.from_ctx(ctx, specs = FEED_SPECS, policy = feed_policy)
 
     # Build NVD Cache and attach to ctx.services
-    nvd_cache = NVDFeedCache(ctx)
+    if not args.no_nvd:
+        nvd_cache = NVDFeedCache(ctx)
+        nvd_status = "Enabled"
+        nvdpol_start_y = cfg_yaml.get("feed_cache", {}).get("nvd", {}).get("start_year", (datetime.now().year - 1))
+        nvdpol_end_y = cfg_yaml.get("feed_cache", {}).get("nvd", {}).get("end_year", datetime.now().year)
+    else:
+        nvd_cache = None
+        nvd_status = "Disabled (--no-nvd)"
+        logger.print_warning("NVD Cache is disabled. NVD data reconciliation will not be available during enrichment.")
 
-    # Refresh
-    nvd_cache.refresh(
-        config=cfg_yaml,
-        feed_cache=feed_cache,
-        refresh_cache=args.refresh_cache,
-        offline=(args.mode == "offline")
-        )
 
     # Build/Init Services
     services = Services(feed_cache = feed_cache, nvd_cache = nvd_cache)
@@ -448,9 +447,13 @@ def main(argv: Optional[Sequence[str]] = None):
     pfh.logger = logger
     ctx = RunContext(paths = paths, pfh = pfh, logger = logger, services = services)
 
+    # Instantiate SchemaDetector
+    detector = SchemaDetector(PARSER_SPECS)
+
+    logger.phase("Initialization")
     logger.print_info(f'Using config: {cfg_yaml_path.name}', label="Global Config")
     logger.print_info(f'Using scoring config: {cfg_score_path.name}', label = "Scoring Weight Config")
-    logger.debug("\n%s", pfh.describe_policy())
+    logger.debug("\n%s", pfh.describe_policy(), extra={"vp_label": "PFH Policy"})
 
     # ----------------------------------------
     # Validate all CLI paths through PFH
@@ -561,9 +564,7 @@ def main(argv: Optional[Sequence[str]] = None):
             raise FileNotFoundError("Missing EPSS cache.")
 
     # Start Pipeline
-
-    logger.print_info("Starting up VulnParse-Pin...", f"VulnParse-Pin {__version__}")
-    logger.print_info(f"Loading file: {scanner_input.name}")
+    logger.print_info(f"Loading file: {scanner_input.name}", label = "Target File")
 
     input_file = scanner_input
 
@@ -578,11 +579,17 @@ def main(argv: Optional[Sequence[str]] = None):
 
     # Available parsers
     #NessusParser(), OpenVASParser(), NessusXMLParser(), OpenVASMXLParser()] #TODO: Extend Parser classes
-    # Detect parser class, initialize, and parse.
+    logger.phase("Normalization")
     logger.print_info("Scanning structure to determine the type of parser to use...", label="Normalization")
     scan_result = None
     try:
-        scan_result = load_and_parse(ctx, input_file)
+        det = detector.select(ctx, input_file)
+        parser = det.parser_cls(ctx, input_file)
+        scan_result = parser.parse()
+        try:
+            assert isinstance(scan_result, ScanResult)
+        except (ValueError, TypeError) as exc:
+            raise TypeError(f"Scan Object does is not of valid type(ScanResult), Trace: {exc}") from exc
     except Exception as e:
         logger.print_error(f"Error occured while trying to determine parser to use. Msg: {e}", label="Normalization")
         return sys.exit(1)
@@ -590,69 +597,82 @@ def main(argv: Optional[Sequence[str]] = None):
     logger.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings", label="Normalization")
 
     # Start enrichment pipeline
-
+    logger.phase("Threat-Intel Enrichment Feeds")
     kev_data = None
     epss_data = None
-    feed_cfg = config.get("feed_cache", {})
 
     # Load Exploit-DB if flagged.
     exploit_data = None
-    if args.enrich_exploit:
-        print()
-        logger.print_info(f"{Fore.LIGHTBLUE_EX}[Enrich-Exploit]{Style.RESET_ALL} Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{args.exploit_source.upper()}{Style.RESET_ALL} source...")
-        exploit_data = load_exploit_data(args.exploit_source, args.exploit_db, feed_cache=feed_cfg, force_refresh=args.refresh_cache)
-        logger.print_success(f"{Fore.LIGHTBLUE_EX}[Enrich-Exploit]{Style.RESET_ALL} Loaded Exploit-DB data ({len(exploit_data)} CVEs with exploits)\n")
+    if args.enrich_exploit and args.exploit_source == "online":
+        print("=" * 25 + "Exploit-DB Enrichment" + "=" * 25)
+        logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{args.exploit_source.upper()}{Style.RESET_ALL} source...", label = "Exploit-DB Loader")
+
+        exploit_data = load_exploit_data(ctx, source=args.exploit_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
+        logger.print_success(f"Loaded Exploit-DB data ({len(exploit_data)} CVEs with exploits)\n", label="Exploit-DB Loader")
+    elif args.enrich_exploit and args.exploit_source == "offline":
+        print("=" * 25 + "Exploit-DB Enrichment" + "=" * 25)
+        logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{ctx.pfh.format_for_log(exploit_db)}{Style.RESET_ALL}...", label="Local Exploit-DB Cache")
+
+        exploit_data = load_exploit_data(ctx, source=exploit_db, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
+
+        logger.print_success(f"Loaded Exploit-DB data ({len(exploit_data)} CVEs with expoits)", label="Exploit-DB Loader")
 
 
-    # Load nvd config file
-    nvd_cfg = config.get("nvd", {})
+    # NVD
 
-    if not args.no_nvd and nvd_cfg.get("enabled", True):
-        start_year = nvd_cfg.get("start_year", 2017)
-        end_year = nvd_cfg.get("end_year", datetime.now().year)
-        years = list(range(start_year, end_year + 1))
-
-        refresh_days = nvd_cfg.get("refresh_interval_days", 1)
-
-        logger.print_info(f"{Fore.LIGHTYELLOW_EX}[NVD Cache]{Style.RESET_ALL} Initializing NVD Cache for {start_year}-{end_year}...")
-        nvd_cache = NVDCache(cache_dir="./nvd_cache", refresh_days=refresh_days, offline=(args.mode == "offline"))
-        nvd_cache.refresh(years=years) # skips download if offline
-        logger.print_success("NVD Cache ready.")
-
-        nvd_status = f"✅ (feeds {start_year}–{end_year}, modified)"
-    elif args.no_nvd:
-        nvd_cache = None
-        nvd_status = "Disabled (--no-nvd)"
-        logger.print_info("[NVD Cache] Disabled via --no-nvd flag. Skipping NVD enrichment per user flag.")
-    else:
-        nvd_cache = None
-        nvd_status = "Disabled (config)"
-        logger.print_info("[NVD Cache] Disabled via config.")
+    if not args.no_nvd and cfg_yaml.get("feed_cache", {}).get("nvd").get("enabled"):
+        if ctx.services.nvd_cache is not None:
+            print("="*25 + "Threat Enrichment Feeds" + "="*25)
+            nvd_policy = nvd_policy_from_config(cfg_yaml)
+            logger.print_info(f"Policy: {nvd_policy}", label="NVD Cache Policy")
+            years_seen = extract_cve_years(ctx, scan_result)
+            normalized_years = select_years(ctx, years_seen)
+            years_to_load = sorted(y for y in normalized_years if nvdpol_start_y <= y <= nvdpol_end_y)
+            include_modified = any(y >= (nvdpol_end_y - 1) for y in years_to_load)
+            if not years_to_load:
+                ctx.logger.print_info("NVD Enabled, but no CVEs in configured year range; skipping NVD index build.", label = "NVD Cache Loader")
+                nvd_status = "Enabled (Skipped)"
+            else:
+                # Initialize NVD if enabled
+                t0 = time.perf_counter()
+                ctx.logger.debug("Years seen during normalization: %s, Years Normalized: %s Years Selected: %s", years_seen, normalized_years, years_to_load, extra={"vp_label": "NVD Cache Loader"})
+                ctx.services.nvd_cache.refresh(
+                    config=cfg_yaml,
+                    feed_cache=feed_cache,
+                    refresh_cache=args.refresh_cache,
+                    offline=(args.mode == "offline"),
+                    years=years_to_load,
+                    include_modified=include_modified,
+                    )
+                t1 = time.perf_counter()
+                logger.debug(f"NVD Load time: {(t1 - t0)}", extra={"vp_label": "Performance"})
+        else:
+            raise ValueError("NVD Enrichment is enabled but no O1 Lookup exists. Check flags and try again.")
 
     # 1 Load enrichment data sources
     if kev_source:
-        kev_data = load_kev_from_json(kev_source, feed_cache=feed_cfg, force_refresh=args.refresh_cache)
+        kev_data = load_kev(ctx, path_url=kev_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
 
     if epss_source:
-        epss_data = load_epss_from_csv(epss_source, feed_cache=feed_cfg, force_refresh=args.refresh_cache)
+        epss_data = load_epss(ctx, path_url=epss_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
         print("="*25 + "Exploit Enrichment Results" + "="*25)
 
 
     # 2 Apply exploit enrichments
     if args.enrich_exploit and exploit_data:
         for asset in scan_result.assets:
-            enriched_findings = enrich_exploit_availability(asset.findings, exploit_data)
+            enriched_findings = enrich_exploit_availability(ctx, asset.findings, exploit_data)
             asset.findings = enriched_findings
-        logger.print_success(f"{Fore.LIGHTBLUE_EX}[Enrich-Exploit]{Style.RESET_ALL}Exploit enrichment applied to findings.\n" + "="*25 + "Enrichment Processing" + "="*25)
+        logger.print_success("Exploit enrichment applied to findings.", label = "Enrichment")
 
     # 3 Apply heuristic tagging *before* enrichment and risk scoring
     for asset in scan_result.assets:
         for finding in asset.findings:
-            apply_heuristic_exploit_tag(finding)
+            apply_heuristic_exploit_tag(ctx, finding)
 
     # 4 Apply enrichments
-    if kev_data or epss_data:
-        enrich_scan_results(scan_result, kev_data, epss_data, offline_mode=args.mode == "offline", score_cfg=score_cfg, nvd_cache=nvd_cache)
+    if kev_data or epss_data and (args.enrich_kev or args.enrich_epss):
+        enrich_scan_results(ctx, scan_result, kev_data, epss_data, offline_mode=args.mode == "offline", score_cfg=scoring_cfg, nvd_cache=nvd_cache)
         logger.print_success("Enrichments Applied")
 
     # 5 Do Post-Processing enrichment status update.
@@ -680,7 +700,8 @@ def main(argv: Optional[Sequence[str]] = None):
 
 
     if args.output:
-        write_output(data=scan_result, file_path=args.output, pretty_print=args.pretty_print)
+        print("="*25 + "Output" + "="*25)
+        write_output(ctx, data=scan_result, file_path=args.output, pretty_print=args.pretty_print)
 
     if args.output_csv:
         export_to_csv(scan_result, args.output_csv, csv_sanitization=csv_sanitization_enabled)
@@ -690,14 +711,13 @@ def main(argv: Optional[Sequence[str]] = None):
         print(json.dumps(asdict(scan_result), indent=4))
 
     if kev_source or epss_source:
-        print_summary_banner(scan_result, args.output if args.output else None, sources=sources)
+        print_summary_banner(ctx, scan_result, args.output if args.output else None, sources=sources)
+    total_runtime = time.time() - start_time
+    print(f"Total runtime: {format_runtime(total_runtime)}")
     return 0
 
 
 
 if __name__ == "__main__":
-    start = time.time()
     rc = main(sys.argv[1:])
-    total_runtime = time.time() - start
-    print(f"Total runtime: {format_runtime(total_runtime)}")
     raise SystemExit(rc)

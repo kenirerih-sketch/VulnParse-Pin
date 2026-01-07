@@ -102,13 +102,38 @@ class FileFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         raw_label = getattr(record, "label", None)
-        label_str = f'"{raw_label} ' if raw_label else ""
+        label_str = f'[{raw_label}] ' if raw_label else ""
 
         msg = record.getMessage()
         msg = ANSI_RE.sub("", msg)
 
         created = self.formatTime(record, datefmt="%Y-%m-%d %H:%M:%S")
         return f"{created} - {record.levelname} - {label_str}{msg}".strip()
+
+# -------------------------------------
+#               Filter
+# -------------------------------------
+class VulnParseRecordFilter(logging.Filter):
+    """
+    - Ensure record has req'd fields.
+    - Allow call sites to pass vp_label.
+    - Maps vp_label to label if label isn't set.
+    """
+    def __init__(self, default_label: str = ""):
+        super().__init__()
+        self.default_label = default_label
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "label"):
+            record.label = self.default_label
+
+        vp_label = getattr(record, "vp_label", None)
+        if vp_label:
+            # Override only if it's empty/default
+            if not record.label:
+                record.label = vp_label
+
+        return True
 
 # -------------------------------------
 #               LoggerWrapper
@@ -152,26 +177,35 @@ class LoggerWrapper:
         self.logall.addHandler(file_handler)
         self.logall.addHandler(console_handler)
 
+        # ------ Filter -------
+        filt = VulnParseRecordFilter(default_label="")
+        file_handler.addFilter(filt)
+        console_handler.addFilter(filt)
+
 
     # ------------- File Only methods -------------
 
     def debug(self, msg: str, *args, **kwargs) -> None:
-        self.log_file.debug(msg, *args, *kwargs)
+        self.log_file.debug(msg, *args, **kwargs)
 
     def info(self, msg: str, *args, **kwargs) -> None:
-        self.log_file.info(msg, *args, *kwargs)
+        self.log_file.info(msg, *args, **kwargs)
 
     def warning(self, msg: str, *args, **kwargs) -> None:
-        self.log_file.warning(msg, *args, *kwargs)
+        self.log_file.warning(msg, *args, **kwargs)
 
     def error(self, msg: str, *args, **kwargs) -> None:
-        self.log_file.error(msg, *args, *kwargs)
+        self.log_file.error(msg, *args, **kwargs)
 
     def exception(self, msg: str, *args, **kwargs) -> None:
-        self.log_file.exception(msg, *args, *kwargs)
+        self.log_file.exception(msg, *args, **kwargs)
 
     def success(self, msg: str, *args, **kwargs) -> None:
         self.log_file.success(msg, *args, **kwargs)
+
+    def phase(self, phase: str) -> None:
+        pstr = f'======= [PHASE] {phase.upper()} ======='
+        self.log_file.debug(pstr, extra=None)
 
     # ------------- Public log methods (console + file) -------------
 

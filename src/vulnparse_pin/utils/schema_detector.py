@@ -58,7 +58,7 @@ class SchemaDetector:
 
     def select(self, ctx, path: Path) -> DetectionResult:
         path = Path(path)
-        path = ctx.pfh.ensure_readable_file(path, label="Input file")
+        path = ctx.pfh.ensure_readable_file(path, label="Input file", log = False)
 
         # Cheap sniff first (format)
         sniff = self._sniff_format(ctx, path) # Lightweight sniffer
@@ -101,7 +101,7 @@ class SchemaDetector:
 
     def _sniff_format(self, ctx, path: Path) -> str:
         # Small data read only here.
-        with ctx.pfh.open_for_read(path, mode="rb", label="Input File") as f:
+        with ctx.pfh.open_for_read(path, mode="rb", label="Input File", log = False) as f:
             head = f.read(4096).lstrip()
 
         if head.startswith(b"{") or head.startswith(b"["):

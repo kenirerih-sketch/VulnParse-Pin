@@ -10,7 +10,7 @@
 import csv
 from typing import List, Any
 from vulnparse_pin.core.classes.dataclass import ScanResult
-import vulnparse_pin.utils.logger_instance as log
+
 
 def _flatten_exploits(exploit_refs: dict[str, list[dict]]) -> tuple[str, str, str]:
     """
@@ -110,7 +110,7 @@ def export_to_csv(scan_result: ScanResult, csv_path: str, csv_sanitization: bool
             })
             
     if not rows:
-        log.log.warning("No findings to export. Skipping CSV write.")
+        ctx.logger.warning("No findings to export. Skipping CSV write.")
         return
             
     fieldnames = rows[0].keys() if rows else []
@@ -124,4 +124,4 @@ def export_to_csv(scan_result: ScanResult, csv_path: str, csv_sanitization: bool
             else:
                 writer.writerow(row)
         
-    log.log.print_success(f"Results exported to CSV: {csv_path}")
+    ctx.logger.print_success(f"Results exported to CSV: {csv_path}")
