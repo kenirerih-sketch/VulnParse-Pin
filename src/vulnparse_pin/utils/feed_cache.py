@@ -100,7 +100,7 @@ class FeedCacheManager:
                            fetched_by: str = UA,) -> None:
         """
         Handles saving .meta files for feed caches.
-        
+
         :param key: Key name - e.g, "kev", "epss", "exploitdb", "nvd"
         :type key: str
         :param source_url: From where the data feed was fetched.
@@ -487,14 +487,14 @@ class FeedCacheManager:
     ) -> Path:
         """
         Stream-download a gzip feed and atomically cache its *decompressed* bytes.
-        
+
         - Downloads with requests stream=True
         - Decompresses on the fly (gzip)
         - Writes decompressed bytes to temp file
         - Computes sha256 over decompressed bytes
         - Atomically replaces final cache file
         - Writes sha+meta files
-        
+
         :returns: final data_path
         """
         spec = self._spec(key)
@@ -606,7 +606,7 @@ class FeedCacheManager:
         - Uses local cache if fresh
         - Otherwise validate via NVD remote .meta and refresh if needed
         - Always commit atomically and write local .sha256 + meta.json
-        
+
         :param key: FeedSpec key name
         :type key: str
         :param ttl_hours: TTL threshold for refreshing cache

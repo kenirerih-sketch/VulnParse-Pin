@@ -6,7 +6,7 @@ pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated aft
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    
+
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("PyTest logging initialized")
@@ -85,7 +85,7 @@ def test_openvas_edge_cases(input_json, expected_hostname_fragment):
     parser = OpenVASParser()
     try:
         scan_result = parser.parse(input_json)
-        
+
         if not scan_result or not scan_result.assets:
             assert expected_hostname_fragment is None
         else:

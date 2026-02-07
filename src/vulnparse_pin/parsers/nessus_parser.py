@@ -6,7 +6,17 @@
 # by the Free Software Foundation, either version 3 of the License, or
 #  any later version.
 # See the LICENSE file for full terms.
+
+# THIS MODULE IS EXPERIMENTAL AND INCOMPLETE AT THIS TIME.
+# PENDING REAL-WORLD JSON DATA SAMPLES, THIS MODULE WILL NOT BE FURTHER DEVELOPED.
+# THERE ARE NO GUARANTEES THIS MODULE WILL WORK.
+# NOT SUPPORTED IN V1.0-RC; EXCLUDED FROM SCHEMADETECTOR BY DEFAULT.
+# IF YOU WISH TO TEST, UNCOMMENT ALL BELOW THIS LINE.
 from __future__ import annotations
+
+EXPERIMENTAL = True
+EXPERIMENTAL_REASON = "Pending real-world JSON samples; parser not validated."
+
 from typing import TYPE_CHECKING
 import json
 from datetime import datetime, timezone
@@ -23,70 +33,75 @@ if TYPE_CHECKING:
 
 
 class NessusParser(BaseParser):
-    def __init__(self, ctx: "RunContext", filepath: str | None = None):
+    def __init__(self, ctx: "RunContext", filepath: str | None = None) -> None:
         super().__init__(ctx = ctx, filepath=filepath)
-        
+
     @classmethod
     def detect_file(cls, filepath):
         """Lightweight file-level detection for Nessus JSON."""
-        if filepath.suffix == ".json":
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    head = f.read(900)
-                    return '"plugin_id"' in head or '"plugin_name"' in head
-            except Exception:
-                return False
-        else:
-            return False
-    
+        return False
+    #    if filepath.suffix == ".json":
+    #        try:
+    #            with open(filepath, "r", encoding="utf-8") as f:
+    #                head = f.read(900)
+    #                return '"plugin_id"' in head or '"plugin_name"' in head
+    #        except Exception:
+    #            return False
+    #    else:
+    #        return False
+
     def detect(self, data: dict) -> bool:
         # Logic that detects if the JSON data looks like a Nessus report.
         # Example: check for a key or structure unique for Nessus
-        detection_patterns = [
-            # Pattern 1: Check for current Nessus-like structure
-            lambda d: "scan" in d and isinstance(d["scan"].get("hosts"), list) and any("vulnerabilities" in h for h in d["scan"]["hosts"]),
-            
-            # Pattern 2: Generic 'results' list
-            lambda d: "results" in d and any(
-                isinstance(item, dict) and (
-                    "plugin_name" in item or
-                    "plugin_id" in item
-                    ) for item in d.get("results", [])
-                ),
-            
-            # Pattern 3: Check for top-level 'assets'
-            lambda d: "assets" in d and isinstance(d["assets"], list),
-            
-            # Pattern 4: Flat list structure (some custom JSONs)
-            lambda d: isinstance(d, list) and any(
-                isinstance(item, dict) and (
-                    "plugin_id" in item or
-                    "plugin_name" in item
-                ) for item in d
-            )
-        ]
-        
-        for pattern in detection_patterns:
-            try:
-                if pattern(data):
-                    return True
-            except Exception as e:
-                self.ctx.logger.print_error(f"Pattern check failed: {e}")
-                continue
-        
         return False
-        
+    #    detection_patterns = [
+    #        # Pattern 1: Check for current Nessus-like structure
+    #        lambda d: "scan" in d and isinstance(d["scan"].get("hosts"), list) and any("vulnerabilities" in h for h in d["scan"]["hosts"]),
+
+    #        # Pattern 2: Generic 'results' list
+    #        lambda d: "results" in d and any(
+    #            isinstance(item, dict) and (
+    #                "plugin_name" in item or
+    #                "plugin_id" in item
+    #                ) for item in d.get("results", [])
+    #            ),
+
+    #        # Pattern 3: Check for top-level 'assets'
+    #        lambda d: "assets" in d and isinstance(d["assets"], list),
+
+    #        # Pattern 4: Flat list structure (some custom JSONs)
+    #        lambda d: isinstance(d, list) and any(
+    #            isinstance(item, dict) and (
+    #                "plugin_id" in item or
+    #                "plugin_name" in item
+    #            ) for item in d
+    #        )
+    #    ]
+
+    #    for pattern in detection_patterns:
+    #        try:
+    #            if pattern(data):
+    #                return True
+    #        except Exception as e:
+    #            self.ctx.logger.print_error(f"Pattern check failed: {e}")
+    #            continue
+
+    #    return False
+
     def parse(self, nessus_json: dict = None) -> ScanResult:
-        if nessus_json is None:
-            with open(self.filepath, "r", encoding="utf-8") as f:
-                nessus_json = json.load(f)
-            return self._parse_json(nessus_json)
+        raise RuntimeError(
+            f"{self.__class__.__name__} is experimental/disabled in this release: {EXPERIMENTAL_REASON}"
+        )
+    #    if nessus_json is None:
+    #        with open(self.filepath, "r", encoding="utf-8") as f:
+    #            nessus_json = json.load(f)
+    #        return self._parse_json(nessus_json)
 
     def _parse_json(self, nessus_json: Dict[str, Any]) -> ScanResult:
         """
         Parse a Nessus JSON vulnerability scan report into structured Python objects.
 
-        This function processes a Nessus scan report, extracts relevant host and vulnerability 
+        This function processes a Nessus scan report, extracts relevant host and vulnerability
         details,
         and structures them into a ScanResult object containing assets and findings.
 
@@ -101,25 +116,25 @@ class NessusParser(BaseParser):
             nessus_json = self.detect_and_transform_flat_json(nessus_json)
         if "scan_metadata" in nessus_json and "scan_date" in nessus_json["scan_metadata"]:
             scan_date = nessus_json["scan_metadata"].get("scan_date")
-        
+
         metadata, report_data = self.normalize_structure(nessus_json)
         scan_date = metadata.get("scan_date")
         assets: Dict[str, Asset] = {}
-        
-        
+
+
         if isinstance(report_data, list) and report_data and any(k in report_data[0] for k in ["finding", "results"]):
             grouped_assets = self.group_findings_by_asset(report_data)
             report_data = list(grouped_assets.values())
-        
-        
-        
-        
+
+
+
+
         for report_host in report_data:
             hostname = coerce_str(self.get_key_case_ins(report_host, ["host-name", "hostname", "host_name", "host"], default="Unknown"))
             ip_address = coerce_ip(self.get_key_case_ins(report_host, ["host-ip", "ip", "ip-address", "ip_address", "host_ip", "host"], default="Unknown"))
             asset_id_raw = hostname or ip_address or "Unknown"
             asset_id = coerce_str(asset_id_raw, default="Unknown")
-            
+
             if asset_id not in assets:
                 assets[asset_id] = Asset(
                     hostname=hostname,
@@ -128,9 +143,9 @@ class NessusParser(BaseParser):
                     findings=[],
                     shodan_data=None #TODO: Build this out.
                 )
-                
+
             severity_counter = Counter()
-                
+
             for item in report_host.get("findings", []):
                 vuln_id = coerce_str(self.get_key_case_ins(item, ["plugin_id", "vuln_id", "id"], default="unknown"))
                 title = coerce_str(self.get_key_case_ins(item, ["plugin_name", "title", "vuln_title"], default="No Title"))
@@ -145,17 +160,25 @@ class NessusParser(BaseParser):
                     cves = [c.strip() for c in cves.split(",") if c.strip()]
                 if not risk:
                     risk = severity
-                
-                
+
+
                 exploit_indicators = ["exploit", "metasploit", "public exploit", "poc available"]
                 exploit_available = any(indicator in str(plugin_output).lower() for indicator in exploit_indicators)
                 cvss_score = coerce_float(self.get_key_case_ins(item, ["cvss3_base_score", "cvss_base_score"], default=0.0))
                 affected_port = coerce_int(self.get_key_case_ins(item, ["port", "affected_port"], default=0), default=0)
                 protocol = coerce_protocol(self.get_key_case_ins(item, ["protocol"], default="Unavailable"), default="Unavailable").lower()
-                
+
                 severity_counter[severity] += 1
-                
+
+                # Create Finding ID
+                scanner_sig = ""
+                kind = ""
+                asset_id = ""
+                canon_fid = ""
+                finding_id = ""
+
                 finding = Finding(
+                    finding_id=finding_id,
                     vuln_id=vuln_id,
                     title=title,
                     severity=severity,
@@ -174,17 +197,17 @@ class NessusParser(BaseParser):
                     protocol=protocol,
                     references=references,
                     detection_plugin=title,
-                    assetid=asset_id
+                    asset_id=asset_id
                 )
-                
+
                 assets[asset_id].findings.append(finding)
-                
+
             # Determine criticality
             assets[asset_id].criticality = self.determine_asset_criticality(severity_counter)
-                
+
         asset_count = len(assets)
         vuln_count = sum(len(asset.findings) for asset in assets.values())
-        
+
         metadata = ScanMetaData(
             source="Nessus",
             scan_date=scan_date if scan_date else "SENTINEL:Date_Unavailable",
@@ -192,14 +215,14 @@ class NessusParser(BaseParser):
             vulnerability_count=vuln_count,
             parsed_at=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
         )
-                
+
         result = ScanResult(
             scan_metadata=metadata,
             assets=list(assets.values())
         )
         return result
-    
-    
+
+
     def get_key_case_ins(self, data: Dict[str, Any], possible_keys: List[str], default: Optional[Any] = None) -> Any:
         for key in possible_keys:
             for actual_key in data.keys():
@@ -283,7 +306,7 @@ class NessusParser(BaseParser):
             elif "assets" in some_json:
                 self.ctx.logger.print_info("Detected already normalized schema.")
                 return some_json
-            
+
             elif "scan" in some_json and "hosts" in some_json["scan"]:
                 self.ctx.logger.print_info("Detected 'scan' top-level key with 'hosts'. Extracting hosts list.")
                 # Return a normalized dict with "assets" key, mapping hosts to assets for parser.
@@ -297,9 +320,9 @@ class NessusParser(BaseParser):
                         "findings": host.get("vulnerabilities", [])
                     }
                     assets_list.append(asset)
-                    
+
                 scan_metadata = some_json["scan"]["info"]
-                    
+
                 return {
                     "scan_metadata": {
                         "source": scan_metadata.get("name", "Unknown"),
@@ -318,7 +341,7 @@ class NessusParser(BaseParser):
         else:
             self.ctx.logger.print_warning("Unrecognized JSON structure - returning as-is.")
             return some_json
-        
+
     # ==========Schema detectors and normalizers=========
 
     def normalize_structure(self, data):
@@ -385,7 +408,7 @@ class NessusParser(BaseParser):
         """
         Normalize Nessus JSON into a consistent format that the parse expects.
         """
-        
+
         # Case - Top-Level 'scan' wrapper
         if "scan" in data:
             scan = data["scan"]
@@ -394,10 +417,10 @@ class NessusParser(BaseParser):
                 "scan_date": scan.get("scan_data") or "SENTINEL:Orig_Date_NotFound",
             }
             results = scan.get("results", [])
-        
-        
-        report_data = results
-        return metadata, report_data
+
+
+            report_data = results
+            return metadata, report_data
 
     def normalize_assets_based(self, data):
         metadata = {
@@ -419,7 +442,7 @@ class NessusParser(BaseParser):
         metadata = data.get("metadata", {})
         report_data = data.get("results", [])
         return metadata, report_data
-    
+
     #========== End Schema detectors and normalizers=========
 
     def determine_asset_criticality(self, severity_counter: Counter) -> str:
@@ -434,7 +457,7 @@ class NessusParser(BaseParser):
             return "Medium"
         else:
             return "Low"
-    
+
     def get_json_depth(self, obj, level=1):
         """Return the depth of a JSON-like structure (dict/list)."""
         if isinstance(obj, dict):

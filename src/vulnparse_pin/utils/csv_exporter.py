@@ -15,16 +15,16 @@ from vulnparse_pin.core.classes.dataclass import ScanResult
 def _flatten_exploits(exploit_refs: dict[str, list[dict]]) -> tuple[str, str, str]:
     """
     Flatten exploit refs into semicolon-separated strings.
-    
+
     Returns:
         (ids, titles, urls) as strings
     """
     if not exploit_refs:
         return ("", "", "")
-    
-    
+
+
     ids, titles, urls = [], [], []
-    
+
     # case 1: dict
     if isinstance(exploit_refs, dict):
         for cve, refs in exploit_refs.items():
@@ -32,27 +32,27 @@ def _flatten_exploits(exploit_refs: dict[str, list[dict]]) -> tuple[str, str, st
                 ids.append(f"{cve}:{ref.get("exploit_id", "")}")
                 titles.append(f"{cve}:{ref.get("title", "")}")
                 urls.append(f"{cve}:{ref.get("url", "")}")
-            
+
         return ";".join(ids), ";".join(titles), ";".join(urls)
-    
+
 def _sanitize_csv_cell(value: str) -> str:
     """
     Sanitize a single CSV cell to mitigate CSV/formula injection.
-    
+
     If the cell begins with a dangerous character, prefix with single quote to avoid Excel doesn't treat it as a formula.
-    
+
     Args:
         value (str): Cell value to sanitize.
     """
     if value is None or not isinstance(value, str) or not value:
         return value
-    
+
     stripped = value.lstrip()
     if stripped and stripped[0] in ("=", "-", "+", "@"):
         leading_len = len(value) - len(stripped)
         leading = value[:leading_len]
         return leading + "'" + stripped
-    
+
     return value
 
 def _sanitize_csv_row(row: dict) -> dict:
@@ -71,19 +71,19 @@ def _sanitize_csv_row(row: dict) -> dict:
 def export_to_csv(scan_result: ScanResult, csv_path: str, csv_sanitization: bool = True) -> None:
     """
     Export scan findings to a CSV file.
-    
+
     Args:
         scan_result (ScanResult): Parsed & enriched results
         csv_path (str): Destination CSV file path
     """
-    
+
     # Flatten findings
     rows = []
     for asset in scan_result.assets:
         for finding in asset.findings:
             exploit_ids, exploit_titles, exploit_urls = _flatten_exploits(finding.exploit_references)
-            
-            
+
+
             rows.append({
                 "asset_hostname": asset.hostname or "",
                 "asset_ip": asset.ip_address or "",
@@ -108,11 +108,11 @@ def export_to_csv(scan_result: ScanResult, csv_path: str, csv_sanitization: bool
                 "solution": finding.solution or "",
                 "description": finding.description or "",
             })
-            
+
     if not rows:
         ctx.logger.warning("No findings to export. Skipping CSV write.")
         return
-            
+
     fieldnames = rows[0].keys() if rows else []
     with open(csv_path, 'w', newline="", encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -123,5 +123,5 @@ def export_to_csv(scan_result: ScanResult, csv_path: str, csv_sanitization: bool
                 writer.writerow(safe_row)
             else:
                 writer.writerow(row)
-        
+
     ctx.logger.print_success(f"Results exported to CSV: {csv_path}")

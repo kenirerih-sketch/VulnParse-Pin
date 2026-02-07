@@ -7,6 +7,7 @@
 #  any later version.
 # See the LICENSE file for full terms.
 from __future__ import annotations
+from ipaddress import ip_address
 from pathlib import Path
 
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 from defusedxml.ElementTree import fromstring
 from vulnparse_pin.parsers.base_parser import BaseParser
 from vulnparse_pin.core.classes.dataclass import ScanMetaData, ScanResult, Asset, Finding
+from vulnparse_pin.core.id import make_asset_id, make_finding_base_canon, make_finding_id
 if TYPE_CHECKING:
     from vulnparse_pin.core.classes.dataclass import RunContext
 
@@ -122,11 +124,11 @@ class OpenVASXMLParser(BaseParser):
                 cves = self._extract_cves(nvt_field, result)
             else:
                 tags = ""
-                title = None
+                title = "SENTINEL:No_Title_Found"
                 cvss_vector = "SENTINEL:Vector_Unavailable"
                 cvss_score = 0.0
-                solution = None
-                plugin_output = None
+                solution = "SENTINEL:No_Solution_Found"
+                plugin_output = "SENINTEL:No_Plugin_Output_Found"
                 cves = ["SENTINEL:No_CVE_Listed"]
 
             # Build out evidence values and other potentially valuable information
@@ -154,8 +156,22 @@ class OpenVASXMLParser(BaseParser):
                     shodan_data=None,
                 )
 
+            # Create Unique Finding_ID
+            scanner_sig = "openvas:" + nvt_field.attrib.get("oid") if nvt_field is not None else "No_SigID"
+            kind = title
+            asset_id = make_asset_id(assets[host].ip_address, assets[host].hostname)
+            canon_fid = make_finding_base_canon(
+                asset_id=asset_id,
+                scanner_sig=scanner_sig,
+                proto=protocol,
+                port=port,
+                kind=kind
+            )
+            finding_id = make_finding_id(canon_fid)
+
             # Build Finding
             finding = Finding(
+                finding_id=finding_id,
                 vuln_id=nvt_field.attrib.get("oid") if nvt_field is not None else "SENTINEL:No_OID",
                 title=title or "SENTINEL:No_Title",
                 description=description,
@@ -170,7 +186,7 @@ class OpenVASXMLParser(BaseParser):
                 plugin_evidence=summarized_evidence or evidence or "SENTINEL:No_Evidence",
                 solution=solution or "SENTINEL:No_Solution",
                 detection_plugin=title or "SENTINEL:No_Detection_Plugin",
-                assetid=host,
+                asset_id=asset_id,
             )
             assets[host].findings.append(finding)
 

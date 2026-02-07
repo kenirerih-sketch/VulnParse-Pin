@@ -18,19 +18,19 @@ def normalize_dict_to_dataclass(raw_dict: dict, dataclass_type):
     '''
     hints = get_type_hints(dataclass_type)
     normalized = {}
-    
+
     for f in fields(dataclass_type):
         field_name = f.name
         field_type = hints.get(field_name)
         raw_value = raw_dict.get(field_name)
-        
+
         # Handle missing keys
         if raw_value is None:
             # For Optional fields, keep None
             normalized[field_name] = None
             continue
-        
-        
+
+
         # Normalize based on expected type
         try:
             # Handle Optional[X]
@@ -42,7 +42,7 @@ def normalize_dict_to_dataclass(raw_dict: dict, dataclass_type):
                 normalized[field_name] = coerce_type(raw_value, field_type)
         except Exception:
             normalized[field_name] = raw_value
-            
+
     return normalized
 
 def coerce_type(value, target_type, default: Optional[Any] = None):
@@ -58,40 +58,40 @@ def coerce_type(value, target_type, default: Optional[Any] = None):
             return [str(v) for v in value]
         else:
             return []
-        
+
     # Handle bool fields
     if target_type == bool:
         if isinstance(value, str):
             return value.lower() in ("true", "yes", "1")
         return bool(value)
-    
+
     # Handle float fields
     if target_type == float:
         try:
             return float(value)
         except (ValueError, TypeError):
             return None
-        
+
     # Handle int fields
     if target_type == int:
         try:
             return int(value)
         except (ValueError, TypeError):
             return None
-        
+
     # Handle str fields
     if target_type == str:
         if value is None:
             return ""
         return str(value)
-    
+
     # Handle Nested Dataclasses
     if is_dataclass(target_type):
         if isinstance(value, dict):
             return normalize_dict_to_dataclass(value, target_type)
-    
+
     # For nested dataclasses or unknown types just return the value, Or extend as needed.
-    
+
     return value
 
 def coerce_list_of_strs(value: Any) -> list[str]:
@@ -115,7 +115,7 @@ def coerce_list_of_strs(value: Any) -> list[str]:
         return [coerce_type(v, str, default="").strip() for v in value if v]
     else:
         return []
-    
+
 def coerce_str(value: Union[str, int, float, None], default: Optional[str] = "Unknown") -> Optional[str]:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -137,7 +137,7 @@ def coerce_int(value: Union[str, int, None], default: Optional[int] = None) -> O
         return int(value)
     except (ValueError, TypeError):
         return default
-    
+
 def coerce_date(value: str, default: Optional[str] = None) -> Optional[str]:
     try:
         #Check ISO format for date
@@ -145,7 +145,7 @@ def coerce_date(value: str, default: Optional[str] = None) -> Optional[str]:
         return value
     except (ValueError, TypeError, AttributeError):
         return default
-    
+
 def coerce_severity(value: str, default: Optional[str] = "Low") -> Optional[str]:
     valid = {
         "critical": "Critical",
@@ -178,7 +178,7 @@ def coerce_protocol(value: str, default: Optional[str] = "Unavailable") -> Optio
             return default
     except (ValueError, TypeError):
         return default
-        
+
 
 def coerce_list(value, default=[]):
     if isinstance(value, list):
@@ -195,7 +195,7 @@ def coerce_float(value, default: Optional[float] = 0.0) -> Optional[float]:
             return float(value)
     except (ValueError, TypeError):
         return float(default)
-        
+
 
 # Fail Hard Helper
 def  require_str(value, field_name) -> str:

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from vulnparse_pin.core.apppaths import AppPaths
+from vulnparse_pin.core.classes.pass_classes import DerivedContext
 from vulnparse_pin.io.pfhandler import PermFileHandler
 from vulnparse_pin.utils.feed_cache import FeedCacheManager
 from vulnparse_pin.utils.nvdcacher import NVDFeedCache
@@ -21,12 +22,13 @@ class Finding:
     """
     Finding class for VPP's result objects.
     """
+    finding_id: str
     vuln_id: str
     title: str
     description: str
     severity: str
     cves: List[str]
-    cvss_score: Optional[float] = field(default_factory=float)
+    cvss_score: Optional[float] = None
     epss_score: Optional[float] = None
     cisa_kev: Optional[bool] = False
     cvss_vector: Optional[str] = None
@@ -45,7 +47,7 @@ class Finding:
     triage_priority: Optional[str] = None
     enriched: Optional[bool] = False
     enrichment_source_cve: Optional[str] = None
-    assetid: Optional[str] = None
+    asset_id: Optional[str] = None
 
 @dataclass
 class Asset:
@@ -82,6 +84,7 @@ class ScanResult:
     """
     scan_metadata: ScanMetaData
     assets: List[Asset] = field(default_factory=list)
+    derived: DerivedContext = field(default_factory=DerivedContext)
 
 
 @dataclass
@@ -131,7 +134,7 @@ class FeedSpec:
         """
         Backwards-Compatible TTL accessor used by FeedCacheManager.
         Returns a float hour value.
-        
+
         :return: Hours value
         :rtype: float
         """

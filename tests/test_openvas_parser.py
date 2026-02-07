@@ -9,7 +9,7 @@ pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated aft
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    
+
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("Pytest logging initialized.")
@@ -43,11 +43,11 @@ def openvas_sample_report():
             ]
         }
     }
-    
+
 def test_openvas_parser_basic(openvas_sample_report):
     parser = OpenVASParser()
     scan_result = parser.parse(openvas_sample_report)
-    
+
     assert isinstance(scan_result, ScanResult)
     assert len(scan_result.assets) == 1
     asset = scan_result.assets[0]
@@ -89,15 +89,15 @@ def openvas_missing_fields_sample() -> dict[str, dict[str, Any]]:
             ]
         }
     }
-    
+
 def test_openvas_missing_fields(openvas_missing_fields_sample: dict[str, dict[str, Any]]) -> None:
     parser = OpenVASParser()
     scan_result = parser.parse(openvas_missing_fields_sample)
-    
+
     asset = scan_result.assets[0]
     assert isinstance(asset, Asset)
     assert asset.hostname == "webserver-01.example.com"
-    
+
     vuln = asset.findings[0]
     assert isinstance(vuln.cves, list) and (not vuln.cves or vuln.cves[0] in ["N/A", "Unknown"])
     assert isinstance(vuln.description, str) and (vuln.description in ["N/A", "Unknown", "Not Available"])
@@ -113,19 +113,19 @@ def openvas_empty_vuln():
             ]
         }
     }
-    
+
 def test_openvas_allmissing_fields(openvas_empty_vuln: dict[str, dict[str, Any]]) -> None:
     parser = OpenVASParser()
     scan_result = parser.parse(openvas_empty_vuln)
     vuln = scan_result.assets[0].findings[0]
     assert isinstance(vuln.vuln_id, str)
     assert re.match(r"^[a-fA-F0-9]{12}$", vuln.vuln_id), "Fallback ID is not a valid SHA256 Hash"
-    
+
 @pytest.fixture
 # Not necessary since standard openvas json host info is all one dictionary obj.
 def openvas_mssing_asset_fields():
     pass
-    
+
 def test_asset_missing_metadata(openvas_mssing_asset_fields ):
     pass
 #####################################################################
@@ -148,14 +148,14 @@ def openvas_bad_cvss_score():
             ]
         }
     }
-    
+
 def test_invalid_cvss_score(openvas_bad_cvss_score):
     parser = OpenVASParser()
     result = parser.parse(openvas_bad_cvss_score)
     vuln = result.assets[0].findings[0]
     assert isinstance(vuln.cvss_score, float)
     assert vuln.cvss_score == 0.0
-    
+
 @pytest.fixture
 def openvas_mixed_severity():
     return {
@@ -187,13 +187,13 @@ def openvas_mixed_severity():
             ]
         }
     }
-    
+
 def test_severity_normalization(openvas_mixed_severity):
     parser = OpenVASParser()
     result = parser.parse(openvas_mixed_severity)
     vuln = result.assets[0].findings[0]
     assert vuln.severity.lower() == "high"
-    
+
 @pytest.fixture
 def openvas_multi_cves():
     return {
@@ -223,7 +223,7 @@ def openvas_multi_cves():
             ]
         }
     }
-    
+
 def test_multiple_cves(openvas_multi_cves):
     parser = OpenVASParser()
     result = parser.parse(openvas_multi_cves)
@@ -231,4 +231,3 @@ def test_multiple_cves(openvas_multi_cves):
     assert isinstance(vuln.cves, list)
     expected_cves = {"CVE-2024-1234", "CVE-2024-5678"}
     assert expected_cves.issubset(set(vuln.cves))
-    

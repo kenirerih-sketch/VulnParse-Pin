@@ -8,7 +8,7 @@ pytestmark = pytest.mark.xfail(reason="JSON parsers deferred; tests outdated aft
 
 @pytest.fixture(scope='session', autouse=True)
 def setup_logging():
-    
+
     if not getattr(log, 'log', None):
         log.log = LoggerWrapper(log_file='logs/pytest.log')
         log.log.print_info("Pytest logging initialized.")
@@ -39,11 +39,11 @@ def nessus_sample_report():
             ]
         }
     }
-    
+
 def test_nessus_parser_basic(nessus_sample_report):
     parser = NessusParser()
     scan_result = parser.parse(nessus_sample_report)
-    
+
     assert isinstance(scan_result, ScanResult)
     assert len(scan_result.assets) == 1
     asset = scan_result.assets[0]
@@ -84,14 +84,14 @@ def nessus_missing_fields_sample() -> dict[str, dict[str, Any]]:
             ]
         }
     }
-    
+
 def test_nessus_missing_fields(nessus_missing_fields_sample: dict[str, dict[str, Any]]) -> None:
     parser = NessusParser()
     scan_result = parser.parse(nessus_missing_fields_sample)
-    
+
     assert isinstance(scan_result, ScanResult)
     assert len(scan_result.assets) == 1
-    
+
     asset = scan_result.assets[0]
     assert isinstance(asset, Asset)
     assert asset.hostname == "test-host"
@@ -108,7 +108,7 @@ def nessus_empty_vuln():
     return {
         "scan": {
             "info": {
-                
+
             },
             "hosts": [
                 {
@@ -117,19 +117,19 @@ def nessus_empty_vuln():
             ]
         }
     }
-    
+
 def test_nessus_allmissing_fields(nessus_empty_vuln: dict[str, dict[str, Any]]) -> None:
     parser = NessusParser()
     scan_result = parser.parse(nessus_empty_vuln)
     vuln = scan_result.assets[0].findings[0]
     assert vuln.vuln_id == "unknown"
-    
+
 @pytest.fixture
 def nessus_mssing_asset_fields():
     return {
         "scan": {
             "info": {
-                
+
             },
             "hosts": [
                 {
@@ -143,20 +143,20 @@ def nessus_mssing_asset_fields():
             ]
         }
     }
-    
+
 def test_asset_missing_metadata(nessus_mssing_asset_fields ):
     parser = NessusParser()
     result = parser.parse(nessus_mssing_asset_fields)
     asset = result.assets[0]
     assert asset.hostname in ["N/A", "Unknown"]
     assert asset.ip_address in ["N/A", "Unknown"]
-    
+
 @pytest.fixture
 def nessus_bad_cvss_score():
     return {
         "scan": {
             "info": {
-                
+
             },
             "hosts": [
                 {
@@ -172,20 +172,20 @@ def nessus_bad_cvss_score():
             ]
         }
     }
-    
+
 def test_invalid_cvss_score(nessus_bad_cvss_score):
     parser = NessusParser()
     result = parser.parse(nessus_bad_cvss_score)
     vuln = result.assets[0].findings[0]
     assert isinstance(vuln.cvss_score, float)
     assert vuln.cvss_score == 0.0
-    
+
 @pytest.fixture
 def nessus_mixed_severity():
     return {
         "scan": {
             "info": {
-                
+
             },
             "hosts": [
                 {
@@ -201,19 +201,19 @@ def nessus_mixed_severity():
             ]
         }
     }
-    
+
 def test_severity_normalization(nessus_mixed_severity):
     parser = NessusParser()
     result = parser.parse(nessus_mixed_severity)
     vuln = result.assets[0].findings[0]
     assert vuln.severity.lower() == "high"
-    
+
 @pytest.fixture
 def nessus_multi_cves():
     return {
         "scan": {
             "info": {
-                
+
             },
             "hosts": [
                 {
@@ -229,7 +229,7 @@ def nessus_multi_cves():
             ]
         }
     }
-    
+
 def test_multiple_cves(nessus_multi_cves):
     parser = NessusParser()
     result = parser.parse(nessus_multi_cves)

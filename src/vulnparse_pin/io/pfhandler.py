@@ -24,7 +24,7 @@ PathLike = Union[str, Path]
 class PermFileHandler:
     """
     Centralized, secure-by-default path + file handler.
-    
+
     Responsibilities:
         - Normalize and sanitize paths
         - Produce log-safe path strings
@@ -343,7 +343,7 @@ class PermFileHandler:
     def _truncate_middle(s: str, max_len: int) -> str:
         """
         Truncate a string in the middle, preserving start + end.
-        
+
         Ex:
             "/very/long/path/to/file.json" -> "/very/lo...file.json"
         """

@@ -15,7 +15,7 @@ class EnrichmentStats:
         self.cvss_vectors_assigned = 0
         self.cvss_vectors_validated = 0
         self.exploitdb_hits = 0
-        
+
     def reset(self):
         self.__init__()
 

@@ -23,12 +23,12 @@ class BaseParser(ABC):
     def __init__(self, ctx: "RunContext", filepath: str | Path):
         self.ctx = ctx
         self.filepath = filepath
-    
+
     @classmethod
     def detect(cls, data: dict) -> bool:
         """Return True if this parser can handle the given data"""
         pass
-    
+
     @classmethod
     def detect_file(cls, filepath: str | Path) -> bool:
         """Detect based on file-level sniffing (XML, CSV, JSON header)."""
@@ -37,28 +37,28 @@ class BaseParser(ABC):
     def parse(self) -> ScanResult:
         """Parse the data and return normalized VulnParse-Pin format"""
         pass
-    
+
     @staticmethod
     def _safe_float(value: str):
-        try: 
+        try:
             return float(value)
         except (TypeError, ValueError):
             return None
-    
-    @staticmethod    
+
+    @staticmethod
     def _safe_int(value:str):
         try:
             return int(value)
         except (TypeError, ValueError):
             return None
-        
+
     @staticmethod
     def _safe_text(elem_text: Optional[str]) -> Optional[str]:
         """Normalize text from xml by stripping leading/trailing whitespace and collapsing newlines"""
         if not elem_text:
             return None
         return " ".join(elem_text.split())
-    
+
     _KEY_PATTERNS = [
     re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE),
     re.compile(r"\bversion\s*[:=]?\s*[v]?\d+(\.\d+){0,4}\b", re.IGNORECASE),
@@ -84,7 +84,7 @@ class BaseParser(ABC):
         r"\s-\s|"                 # spaced hyphen bullets
         r"\s:\s(?!\d)"                  # well-formed 'key : value' pairs
         , re.VERBOSE)
-    
+
     @classmethod
     def _smart_chunk_lines(cls, raw: str, max_chunk_len: int = 350) -> List[str]:
         """
@@ -106,20 +106,20 @@ class BaseParser(ABC):
         if buf:
             chunks.append(buf.strip())
         return chunks
-    
+
     @staticmethod
     def _summarize_plugin_output(output: Optional[str], max_lines: int = 5) -> Tuple[str, List[str]]:
         '''
         Summarize plugin_output field from scanners.
-        
+
         - Keeps first "max_lines" lines
         - Extracts key info (versions, errors, registry keys, banners))
         - Appends a truncation notice if cut
-        
+
         Args:
             output: Raw plugin_output string
             max_lines: Max number of lines to keep before truncating
-            
+
         Returns:
             (summary_text, key_info_list)
             - summary_text is a short human-readable string (multiline).
@@ -127,25 +127,24 @@ class BaseParser(ABC):
         '''
         if not output:
             return ("SENTINEL:No_Plugin_Output", ["SENTINEL:No_Plugin_Output_Src"])
-        
+
         chunks = BaseParser._smart_chunk_lines(output)
         if not chunks:
             cleaned = output.strip()
             return cleaned, [cleaned]
-        
+
         # Always keep first chunk as summary
         summary = chunks[0]
-        
+
         # Always do at least one evidence line.
         evidence = chunks[:max_lines] if chunks else [summary]
-        
+
         # Add truncation marker if there exists more content
         if len(chunks) > max_lines:
             evidence.append(f"...truncated (~{len(chunks) - max_lines} more lines)")
-            
+
         # Dedup if evidence is only one line and equals summmary.
         if len(evidence) == 1 and evidence[0] == summary:
             evidence = ["SENTINEL:Deduped_From_Output"]
-        
+
         return summary, evidence
-    

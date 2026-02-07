@@ -31,11 +31,11 @@ def detect_cvss_version(vector: Optional[str]) -> Optional[str]:
     """Return 'v3', 'v2', or None based on syntax."""
     if not vector:
         return None
-    
+
     v = re.sub(r'\s+', '', vector.strip())
     if v.startswith("SENTINEL:"):
         return None
-    
+
     if CVSS3_RE.match(v):
         return "v3"
     if CVSS2_RE.match(v):
@@ -45,10 +45,10 @@ def detect_cvss_version(vector: Optional[str]) -> Optional[str]:
 def is_valid_cvss_vector(vector: Optional[str]) -> bool:
     '''
     Validate if a given string is well-formed CVSS V3.x or V2 vector.
-    
+
     Args:
         vector (str): CVSS vector string.
-        
+
     Returns:
         bool: True if valid, False otherwise.
     '''
@@ -58,20 +58,20 @@ def is_valid_cvss_vector(vector: Optional[str]) -> bool:
 def parse_cvss_vector(ctx: "RunContext", vector: str):
     '''
     Parse a CVSS v3.X or V2 vector string into its base score components.
-    
+
     Args:
         vector (str): CVSS vector string.
-        
+
     Returns:
         dict or None: Dictionary of CVSS score or None if invalid or supported.
     '''
     if not is_valid_cvss_vector(vector):
         ctx.logger.debug(f"[cvss_util] Invalid CVSS Vector: {vector}")
         return None
-    
+
     if CVSS3 is None or CVSS2 is None:
         raise ImportError("cvss package is not installed. Install it with 'pip install cvss'.")
-    
+
     try:
         if detect_cvss_version(vector) == "v3":
             cvss_obj = CVSS3(vector)

@@ -45,7 +45,7 @@ def _portable_base() -> Path:
     if getattr(os, "frozen", False):
         import sys
         return Path(sys.executable).resolve().parent
-    
+
     # Run from source/venv/etc
     return Path.cwd().resolve()
 
@@ -160,7 +160,7 @@ def ensure_user_configs(paths: AppPaths) -> Tuple[Path, Path]:
         default_bytes_json = resources.files("vulnparse_pin.resources").joinpath("scoring.json").read_bytes()
         dst_json.write_bytes(default_bytes_json)
 
-    
+
     return dst_yaml, dst_json
 
 def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
@@ -168,7 +168,7 @@ def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
     Loads config files for VulnParse-Pin.
     - Global Config: config.yaml
     - Scoring Config: scoring.json
-    
+
     :param paths: Various attributes available from AppPaths dataclass.
     :type paths: AppPaths
     :return: Returns dict objects with config data.
@@ -197,7 +197,7 @@ def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
 
     if not isinstance(cfg_json, dict):
         raise RuntimeError("Scoring config must be an object at top-level.")
-    
+
     return cfg_yaml, cfg_json
 
 def _harden_dir(path: Path, mode: int) -> None:

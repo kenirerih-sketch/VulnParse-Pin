@@ -215,7 +215,7 @@ def nvd_policy_from_config(config: Dict[str, Any]) -> Dict[str, Any]:
 def nvd_feed_plan(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Returns the NVD Feed plan based off the YAML config parameters.
-    
+
     :param config: Global config YAML
     :type config: Dict[str, Any]
     :return: A list of nvd feed params based on YAML config.

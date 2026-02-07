@@ -1,4 +1,4 @@
-from vulnparse_pin.utils.schema_detector import ParserSpec
+from vulnparse_pin.core.schema_detector import ParserSpec
 from .nessus_parser import NessusParser
 from .openvas_parser import OpenVASParser
 from .openvasXML_parser import OpenVASXMLParser

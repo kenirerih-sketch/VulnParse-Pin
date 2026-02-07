@@ -139,7 +139,7 @@ class SchemaDetector:
         Winner: Highest confidence;
         Ties: Parser Priority;
         Then Stable Name
-        
+
         :param self: Description
         :param results: Description
         :type results: list[DetectionResult]

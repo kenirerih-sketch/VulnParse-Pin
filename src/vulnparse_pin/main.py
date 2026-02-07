@@ -24,7 +24,7 @@ from vulnparse_pin.utils.feed_cache import FeedCacheManager
 from vulnparse_pin.utils.logger import LoggerWrapper
 from vulnparse_pin.parsers.__init__ import PARSER_SPECS
 from vulnparse_pin.utils.exploit_enrichment_service import *
-from vulnparse_pin.utils.schema_detector import SchemaDetector
+from vulnparse_pin.core.schema_detector import SchemaDetector
 from vulnparse_pin.utils.validations import *
 from vulnparse_pin.utils.nvdcacher import NVDFeedCache, nvd_policy_from_config
 from vulnparse_pin.utils.enrichment_stats import stats
@@ -40,7 +40,7 @@ NVD_MIN_YEAR = 2002
 def print_summary_banner(ctx: "RunContext", scan_result, output_file=None, sources=None):
     '''
     Prints a formatted summary banner with key metrics from the scan result.
-    
+
     Args:
         scan_result (ScanResult): The final processed scan results.
         output_file (str, optional): The path to the output JSON file.
@@ -51,7 +51,7 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file=None, sourc
                 "epss": True,
                 "nvd": "Enabled (feeds 2017-2025, modified)" # or "Disabled (--no-nvd)", "Offline (feeds missing)"
             }
-        
+
     Returns:
         None
     '''
@@ -87,9 +87,9 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file=None, sourc
     print("="*60)
     print(f" Total Assets Analyzed            : {total_assets:,}")
     print(f" Total Findings Triaged           : {total_findings:,}")
-    print(f" Average Asset Risk Score         : {avg_risk_score:.2f}")
+    print(f" Average Asset Risk Score         : {avg_risk_score:.2f}" if avg_risk_score > 0.0 else " Average Asset Risk Score         : Not Computed (Insufficient Scoring Inputs)")
     if highest_risk_asset:
-        print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score:.2f})")
+        print(f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: {highest_risk_asset.avg_risk_score:.2f})" if highest_risk_asset.avg_risk_score > 0.0 else f" Highest Risk Asset               : {highest_risk_asset.hostname} (Score: Not Computed (Insufficient Scoring Inputs))")
     else:
         print(" Highest Risk Asset: N/A")
     print("-" * 60)
@@ -190,9 +190,9 @@ def write_output(ctx: "RunContext", data: Dict, file_path: PathLike, pretty_prin
 
     Args:
         data ([dict]): JSON dict obj being dumped.
-        file_path ([str]): File path/file that is being written to. 
+        file_path ([str]): File path/file that is being written to.
         pretty_print ([bool]): True if --pretty-print argument is supplied.
-        
+
     Returns:
         None: Write operations are completed with status messages printed to console.
     '''
@@ -264,7 +264,7 @@ def select_years(ctx: "RunContext", years_seen: set[int]) -> set[int]:
 def resolve_feed_path(arg_val, offline_mode: bool, default_online: PathLike, default_offline: PathLike) -> Any | str:
     """
     Used to determine how the feeds should be resolved based on user input.
-    
+
     :param arg_val: User input from flag
     :param offline_mode: Whethere or not offline mode flag is specified.
     :type offline_mode: bool
@@ -353,7 +353,7 @@ def main(argv: Optional[Sequence[str]] = None):
     logwrap = LoggerWrapper(str(bootstrap_log), log_level=args.log_level)
     logger = logwrap
     logger.print_info("Starting up VulnParse-Pin...", f"VulnParse-Pin {__version__}")
-    
+
     # -------------------------------------
     #   Init PFH
     # -------------------------------------
@@ -597,6 +597,7 @@ def main(argv: Optional[Sequence[str]] = None):
     logger.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings", label="Normalization")
 
     # Start enrichment pipeline
+    print(" "*25 + "Threat Enrichment Feeds" + " "*25)
     logger.phase("Threat-Intel Enrichment Feeds")
     kev_data = None
     epss_data = None
@@ -604,13 +605,13 @@ def main(argv: Optional[Sequence[str]] = None):
     # Load Exploit-DB if flagged.
     exploit_data = None
     if args.enrich_exploit and args.exploit_source == "online":
-        print("=" * 25 + "Exploit-DB Enrichment" + "=" * 25)
+        print("=" * 25 + "Exploit-DB" + "=" * 25)
         logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{args.exploit_source.upper()}{Style.RESET_ALL} source...", label = "Exploit-DB Loader")
 
         exploit_data = load_exploit_data(ctx, source=args.exploit_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
         logger.print_success(f"Loaded Exploit-DB data ({len(exploit_data)} CVEs with exploits)\n", label="Exploit-DB Loader")
     elif args.enrich_exploit and args.exploit_source == "offline":
-        print("=" * 25 + "Exploit-DB Enrichment" + "=" * 25)
+        print("=" * 25 + "Exploit-DB" + "=" * 25)
         logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{ctx.pfh.format_for_log(exploit_db)}{Style.RESET_ALL}...", label="Local Exploit-DB Cache")
 
         exploit_data = load_exploit_data(ctx, source=exploit_db, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
@@ -622,7 +623,7 @@ def main(argv: Optional[Sequence[str]] = None):
 
     if not args.no_nvd and cfg_yaml.get("feed_cache", {}).get("nvd").get("enabled"):
         if ctx.services.nvd_cache is not None:
-            print("="*25 + "Threat Enrichment Feeds" + "="*25)
+            print("=" * 25 + "National Vulnerability Database (NVD)" + "=" * 25)
             nvd_policy = nvd_policy_from_config(cfg_yaml)
             logger.print_info(f"Policy: {nvd_policy}", label="NVD Cache Policy")
             years_seen = extract_cve_years(ctx, scan_result)
@@ -651,15 +652,18 @@ def main(argv: Optional[Sequence[str]] = None):
 
     # 1 Load enrichment data sources
     if kev_source:
+        print("=" * 25 + "CISA Known Exploited Vulnerabilities (KEV)" + "=" * 25)
         kev_data = load_kev(ctx, path_url=kev_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
 
     if epss_source:
+        print("=" * 25 + "FIRST Exploit Prediction Scoring System (EPSS)" + "=" * 25)
         epss_data = load_epss(ctx, path_url=epss_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
-        print("="*25 + "Exploit Enrichment Results" + "="*25)
 
 
     # 2 Apply exploit enrichments
+    logger.phase("Exploit Enrichment")
     if args.enrich_exploit and exploit_data:
+        print("="*25 + "Exploit Enrichment Results" + "="*25)
         for asset in scan_result.assets:
             enriched_findings = enrich_exploit_availability(ctx, asset.findings, exploit_data)
             asset.findings = enriched_findings
@@ -671,9 +675,11 @@ def main(argv: Optional[Sequence[str]] = None):
             apply_heuristic_exploit_tag(ctx, finding)
 
     # 4 Apply enrichments
+    logger.phase("Enrichment Pipeline")
     if kev_data or epss_data and (args.enrich_kev or args.enrich_epss):
+        print(" "*25 + "Enrichment Pipeline" + " "*25)
         enrich_scan_results(ctx, scan_result, kev_data, epss_data, offline_mode=args.mode == "offline", score_cfg=scoring_cfg, nvd_cache=nvd_cache)
-        logger.print_success("Enrichments Applied")
+        logger.print_success("All enrichments Applied")
 
     # 5 Do Post-Processing enrichment status update.
     for asset in scan_result.assets:
@@ -698,9 +704,11 @@ def main(argv: Optional[Sequence[str]] = None):
         }
     }
 
+    if args.output or args.output_csv:
+        logger.phase("Output")
+        print("="*25 + "Output" + "="*25)
 
     if args.output:
-        print("="*25 + "Output" + "="*25)
         write_output(ctx, data=scan_result, file_path=args.output, pretty_print=args.pretty_print)
 
     if args.output_csv:
@@ -711,6 +719,7 @@ def main(argv: Optional[Sequence[str]] = None):
         print(json.dumps(asdict(scan_result), indent=4))
 
     if kev_source or epss_source:
+        logger.phase("Summary")
         print_summary_banner(ctx, scan_result, args.output if args.output else None, sources=sources)
     total_runtime = time.time() - start_time
     print(f"Total runtime: {format_runtime(total_runtime)}")

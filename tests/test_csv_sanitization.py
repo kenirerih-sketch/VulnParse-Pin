@@ -11,7 +11,7 @@ def test_sanitize_csv_cell_dangerous_prefix():
         "-IMPERSONATION": "'-IMPERSONATION",
         r"@HYPERLINK(\"http://evil\")": r"'@HYPERLINK(\"http://evil\")",
     }
-    
+
     for value, expected in cases.items():
         assert _sanitize_csv_cell(value) == expected
 

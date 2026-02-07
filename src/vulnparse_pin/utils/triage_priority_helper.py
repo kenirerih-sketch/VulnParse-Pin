@@ -30,25 +30,25 @@ def determine_triage_priority(
     # 1) Override to Critical on KEV
     if cisa_kev:
         return "Critical"
-    
+
     # 2) Use exploit to bump raw_score if missing CVSS
     if raw_score == 0 and exploit_available:
         raw_score = max(cfg.exploit_floor_score, raw_score)
-        
+
     # 3) Critical by raw score
     if raw_score >= cfg.critical_score:
         return "Critical"
-    
+
     # 4) Critical by High severity + EPSS
     if severity == "High" and epss_score >= cfg.high_epss_score:
         return "Critical"
-    
+
     # 5) Warning Level
     if raw_score >= 7.0 or (exploit_available and raw_score >= cfg.exploit_floor_score):
         return "High"
-    
+
     # 6) Everything else is Medium or below
     if raw_score >= 4.0:
         return "Medium"
-    
+
     return "Low"
