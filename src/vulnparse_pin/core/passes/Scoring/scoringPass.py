@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, TYPE_CHECKING
-from vulnparse_pin.core.classes.ScoringPolicy import ScoringPolicyV1
+from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
 from vulnparse_pin.core.classes.pass_classes import DerivedPassResult, Pass
 from vulnparse_pin.core.passes.types import ScoreCoverage, ScoredFinding, ScoringPassOutput
 from vulnparse_pin.core.classes.pass_classes import PassMeta

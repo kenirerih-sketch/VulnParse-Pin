@@ -14,11 +14,12 @@ import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Optional, Sequence, Type
 import os
-from vulnparse_pin.core.classes import ScoringPolicy
-from vulnparse_pin.core.classes.ScoringPolicy import ScoringPolicyV1
+from vulnparse_pin.core.classes import scoring_pol
+from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
 from vulnparse_pin.core.classes.dataclass import FeedCachePolicy, FeedSpec, RunContext, ScanResult, Services
 from vulnparse_pin.core.classes.pass_classes import PassRunner
-from vulnparse_pin.core.passes.scoringPass import ScoringPass
+from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
+from vulnparse_pin.core.passes.TopN.TN_triage_config import TriageConfigLoadResult, load_tn_config
 from vulnparse_pin.core.passes.types import ScoringPassOutput
 from vulnparse_pin.utils.enricher import enrich_scan_results, load_epss, load_kev, update_enrichment_status
 import argparse
@@ -464,9 +465,11 @@ def main(argv: Optional[Sequence[str]] = None):
     # -------------------------------------
     #   Load Global Config
     # -------------------------------------
-    cfg_yaml_path, cfg_score_path = ensure_user_configs(paths)
+    cfg_yaml_path, cfg_score_path,  cfg_topn_path = ensure_user_configs(paths)
 
-    cfg_yaml, scoring_cfg = load_config(ctx)
+    cfg_yaml, scoring_cfg, topn_cfg = load_config(ctx)
+
+    topn_pol: TriageConfigLoadResult = load_tn_config(ctx, topn_cfg) #TODO: Implement strict flag for schemas
 
     score_pol: ScoringPolicyV1 = load_score_policy(scoring_cfg)
     try:
@@ -512,7 +515,7 @@ def main(argv: Optional[Sequence[str]] = None):
 
 
     # Build/Init Services
-    services = Services(feed_cache = feed_cache, nvd_cache = nvd_cache)
+    services = Services(feed_cache = feed_cache, nvd_cache = nvd_cache, topn_config = topn_pol.config)
     # -------------------------------------
     #   Final CTX(Runtime)
     # -------------------------------------
@@ -541,6 +544,7 @@ def main(argv: Optional[Sequence[str]] = None):
     logger.phase("Initialization")
     logger.print_info(f'Using config: {cfg_yaml_path.name}', label="Global Config")
     logger.print_info(f'Using scoring config: {cfg_score_path.name}', label = "Scoring Weight Config")
+    logger.print_info(f"Using TopN Pass Config: {cfg_topn_path.name}", label = "TopN Pass Config")
     logger.debug("\n%s", pfh.describe_policy(), extra={"vp_label": "PFH Policy"})
     
     # Init PassRunner

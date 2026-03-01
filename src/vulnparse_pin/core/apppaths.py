@@ -138,17 +138,21 @@ class AppPaths:
     def config_path_yaml(self) -> Path:
         return self.config_dir / "config.yaml"
 
-    def config_path_json(self) -> Path:
+    def config_path_scoring(self) -> Path:
         return self.config_dir / "scoring.json"
 
-def ensure_user_configs(paths: AppPaths) -> Tuple[Path, Path]:
+    def config_path_topn(self) -> Path:
+        return self.config_dir / "tn_triage.json"
+
+def ensure_user_configs(paths: AppPaths) -> Tuple[Path, Path, Path]:
     """
     Ensure config.yaml and/or scoring.json exists in the writable config dir.
     If missing, copy from package resource default.
     """
     paths.ensure_dirs()
     dst_yaml = paths.config_path_yaml() # e.g., .../config/config.yaml
-    dst_json = paths.config_path_json() # e.g., .../config/scoring.json
+    dst_scoring = paths.config_path_scoring() # e.g., .../config/scoring.json
+    dst_topn = paths.config_path_topn() # e.g., .../config/tn_triage.json
 
     #   Create missing Global config YAML
     if not dst_yaml.exists():
@@ -156,25 +160,30 @@ def ensure_user_configs(paths: AppPaths) -> Tuple[Path, Path]:
         dst_yaml.write_bytes(default_bytes_yaml)
 
     #   Create missing Scoring config JSON
-    if not dst_json.exists():
-        default_bytes_json = resources.files("vulnparse_pin.resources").joinpath("scoring.json").read_bytes()
-        dst_json.write_bytes(default_bytes_json)
+    if not dst_scoring.exists():
+        default_bytes_scoring = resources.files("vulnparse_pin.resources").joinpath("scoring.json").read_bytes()
+        dst_scoring.write_bytes(default_bytes_scoring)
+
+    if not dst_topn.exists():
+        default_bytes_topn = resources.files("vulnparse_pin.resources").joinpath("tn_triage.json").read_bytes()
+        dst_topn.write_bytes(default_bytes_topn)
 
 
-    return dst_yaml, dst_json
+    return dst_yaml, dst_scoring, dst_topn
 
-def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
+def load_config(ctx: "RunContext") -> Tuple[dict, dict, dict]:
     """
     Loads config files for VulnParse-Pin.
     - Global Config: config.yaml
     - Scoring Config: scoring.json
+    - TopN Config: tn_triage.json
 
     :param paths: Various attributes available from AppPaths dataclass.
     :type paths: AppPaths
     :return: Returns dict objects with config data.
     :rtype: Tuple[dict, dict]
     """
-    cfg_path_yaml, cfg_path_json = ensure_user_configs(ctx.paths)
+    cfg_path_yaml, cfg_path_scoring, cfg_path_topn = ensure_user_configs(ctx.paths)
 
     # Enforce PFH policy
 
@@ -190,7 +199,7 @@ def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
         raise RuntimeError("Global config must be an object/mapping at top-level.")
 
     try:
-        with ctx.pfh.open_for_read(cfg_path_json, mode = "r", label = "Scoring Config (JSON)") as r:
+        with ctx.pfh.open_for_read(cfg_path_scoring, mode = "r", label = "Scoring Config (JSON)") as r:
             cfg_json = json.load(r)
     except (json.JSONDecodeError, TypeError, ValueError) as e:
         raise RuntimeError("Could not load json config file.") from e
@@ -198,7 +207,16 @@ def load_config(ctx: "RunContext") -> Tuple[dict, dict]:
     if not isinstance(cfg_json, dict):
         raise RuntimeError("Scoring config must be an object at top-level.")
 
-    return cfg_yaml, cfg_json
+    try:
+        with ctx.pfh.open_for_read(cfg_path_topn, mode = "r", label = "TopN Sconfig (JSON)") as r:
+            cfg_topn = json.load(r)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        raise RuntimeError("Could not load json config file.") from e
+
+    if not isinstance(cfg_topn, dict):
+        raise RuntimeError("TopN config must be an object at top-level.")
+
+    return cfg_yaml, cfg_json, cfg_path_topn
 
 def _harden_dir(path: Path, mode: int) -> None:
     """

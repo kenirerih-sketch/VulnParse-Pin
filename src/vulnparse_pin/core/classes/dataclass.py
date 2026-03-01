@@ -8,7 +8,7 @@
 # See the LICENSE file for full terms.
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
 
 from vulnparse_pin.core.apppaths import AppPaths
@@ -16,6 +16,9 @@ from vulnparse_pin.core.classes.pass_classes import DerivedContext
 from vulnparse_pin.io.pfhandler import PermFileHandler
 from vulnparse_pin.utils.feed_cache import FeedCacheManager
 from vulnparse_pin.utils.nvdcacher import NVDFeedCache
+
+if TYPE_CHECKING:
+    from vulnparse_pin.core.passes.TopN.TN_triage_config import TriageConfigLoadResult
 
 @dataclass
 class Finding:
@@ -106,6 +109,7 @@ class Services:
     """
     feed_cache: Optional["FeedCacheManager"] = None
     nvd_cache: Optional["NVDFeedCache"] = None
+    topn_config: Optional["TriageConfigLoadResult"] = None
 
 @dataclass(frozen = True)
 class RunContext:
