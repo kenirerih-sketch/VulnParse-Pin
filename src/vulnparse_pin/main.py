@@ -214,7 +214,7 @@ def _require(condition: bool, msg: str) -> None:
 
 def write_output(ctx: "RunContext", data: Dict, file_path: PathLike, pretty_print=False):
     '''
-    Write JSON results to disk using the path‑policy handler. 
+    Write JSON results to disk using the path‑policy handler with streaming output.
 
     Args:
         ctx (RunContext): runtime context carrying ``pfh`` and ``logger``
@@ -224,24 +224,86 @@ def write_output(ctx: "RunContext", data: Dict, file_path: PathLike, pretty_prin
     '''
     target = ctx.pfh.ensure_writable_file(file_path, label="JSON Output File",
                                           create_parents=True, overwrite=True)
+
+    # Determine data size for logging and optimization decisions
+    data_size = _estimate_dict_size(data)
+
     with ctx.pfh.open_for_write(target, mode="w", encoding="utf-8", label="JSON Output") as f:
         if pretty_print:
             ctx.logger.print_info("Pretty-printing JSON - Standby...", label="Output")
             try:
-                json.dump(data, f, indent=4)
+                # For large datasets, stream to avoid memory spikes
+                if data_size > 50_000_000:  # 50MB threshold
+                    ctx.logger.debug(f"Large dataset detected ({data_size:,} bytes), using streaming JSON output", extra={"vp_label": "JSON Output"})
+                    _stream_json_dump(data, f, indent=4)
+                else:
+                    json.dump(data, f, indent=4)
                 ctx.logger.print_success(f"Parsed results are stored in: {target}", label="Output")
             except Exception as e:
                 ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label="Output")
                 sys.exit(1)
         else:
             try:
-                ctx.logger.print_info("[*] Dumping JSON results...", label="Output")
-                json.dump(data, f)
+                # Always use streaming for non-pretty output to minimize memory usage
+                ctx.logger.debug(f"Streaming JSON output ({data_size:,} bytes)", extra={"vp_label": "JSON Output"})
+                _stream_json_dump(data, f, indent=None)
                 ctx.logger.print_success(f"JSON results available in: {target}", label="Output")
             except Exception as e:
                 ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label="Output")
                 ctx.logger.exception("Exception: %s", e)
                 sys.exit(1)
+
+
+def _estimate_dict_size(data: Dict, sample_size: int = 100) -> int:
+    """
+    Estimate dictionary size in bytes for optimization decisions.
+    Uses sampling for large datasets to avoid expensive computation.
+    """
+    if not isinstance(data, dict):
+        return 0
+
+    # For small datasets, calculate exactly
+    if len(data) <= sample_size:
+        return len(json.dumps(data, default=str).encode('utf-8'))
+
+    # For large datasets, sample and extrapolate
+    sample_keys = list(data.keys())[:sample_size]
+    sample_data = {k: data[k] for k in sample_keys}
+    sample_bytes = len(json.dumps(sample_data, default=str).encode('utf-8'))
+
+    # Extrapolate: assume uniform distribution
+    return int((sample_bytes / sample_size) * len(data))
+
+
+def _stream_json_dump(data: Dict, file_obj, indent=None):
+    """
+    Stream JSON dump to avoid loading entire structure into memory.
+    Uses incremental writing for better memory efficiency.
+    """
+    file_obj.write('{')
+
+    first_item = True
+
+    for key, value in data.items():
+        if not first_item:
+            file_obj.write(',')
+        first_item = False
+
+        # Write key
+        file_obj.write(json.dumps(key, default=str))
+        file_obj.write(':')
+
+        if indent is not None:
+            file_obj.write('\n')
+            file_obj.write(' ' * indent)
+
+        json.dump(value, file_obj, indent=indent, default=str)
+
+    # Write closing brace
+    if indent is not None:
+        file_obj.write('\n')
+    file_obj.write('}')
+    file_obj.write('\n')
 
 def valid_input_file(path: PathLike) -> Path:
     if not os.path.isfile(path):
@@ -793,15 +855,19 @@ def main(argv: Optional[Sequence[str]] = None):
     # 4 Apply enrichments
     logger.phase("Enrichment Pipeline")
     if kev_data or epss_data and (args.enrich_kev or args.enrich_epss):
-        
-        enrich_scan_results(ctx, scan_result, kev_data, epss_data, offline_mode = args.mode == "offline", score_cfg = ctx.services.scoring_config, nvd_cache = nvd_cache)
-        logger.print_success("All enrichments Applied") #TODO: Move scoring cfg out
+        enrich_scan_results(
+            ctx, scan_result, kev_data, epss_data,
+            offline_mode=args.mode == "offline",
+            score_cfg=ctx.services.scoring_config,
+            nvd_cache=nvd_cache
+        )
+        logger.print_success("All enrichments Applied")  # TODO: Move scoring cfg out
 
 
     # 5 Passes
     # Scoring Pass
     logger.phase("Dervied Pass Pipeline")
-    logger.print_info(f"Executing derived passes pipeline — Passes: {[p for p in passesList] if len(passesList) > 1 else passesList[0]}", label = "Pass Pipeline")
+    logger.print_info(f"Executing derived passes pipeline — Passes: {[getattr(p, "name") for p in passesList] if len(passesList) > 1 else passesList[0]}", label = "Pass Pipeline")
     scan_result = passOrchestrator.run_all(ctx = ctx, scan = scan_result)
     logger.print_success("Derived Passes Pipeline complete.", label = "Pass Pipeline")
 

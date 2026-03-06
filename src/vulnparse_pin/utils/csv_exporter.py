@@ -115,11 +115,12 @@ def _resolve_pass(scan: ScanResult, prefix: str) -> Optional[Dict[str, DerivedPa
 
 def export_to_csv(ctx: "RunContext", scan_result: ScanResult, *, csv_path: str | Path, csv_sanitization: bool = True) -> None:
     """
-    Export scan findings to a CSV file.
+    Export scan findings to a CSV file with streaming output.
 
     Args:
         scan_result (ScanResult): Parsed & enriched results
         csv_path (str): Destination CSV file path
+        csv_sanitization (bool): Whether to sanitize CSV cells for Excel compatibility
     """
 
     # ------- derived overlays --------
@@ -170,103 +171,125 @@ def export_to_csv(ctx: "RunContext", scan_result: ScanResult, *, csv_path: str |
                     if isinstance(frec, dict) and frec.get("finding_id") and isinstance(frec.get("rank"), int):
                         global_rank[str(frec["finding_id"])] = int(frec["rank"])
 
-    # Flatten findings
-    rows: List[Dict[str, Any]] = []
-    for asset in scan_result.assets:
-        for finding in asset.findings:
-            exploit_ids, exploit_titles, exploit_urls = _flatten_exploits(finding.exploit_references)
+    # Count total findings for progress logging
+    total_findings = sum(len(asset.findings) for asset in scan_result.assets)
 
-            fid = getattr(finding, "finding_id", "") or ""
-            aid = getattr(finding, "asset_id", "") or getattr(asset, "asset_id", "") or ""
-
-            srec = scored_findings.get(fid) if fid else None
-            topn_frec = topn_finding_rank.get(fid) if fid else None
-            topn_arec = topn_asset_rank.get(aid) if aid else None
-            inf = topn_arec.get("inference") if isinstance(topn_arec, dict) else None
-            if not isinstance(inf, dict):
-                inf = {}
-
-            # Scoring Overlay
-            raw_score = round(srec.get("raw_score") if isinstance(srec, dict) else -0.0, 4)
-            operational_score = round(srec.get("operational_score") if isinstance(srec, dict) else -0.0, 4)
-            risk_band = srec.get("risk_band") if isinstance(srec, dict) else ""
-            score_reason = srec.get("reason") if isinstance(srec, dict) else ""
-
-            # TopN Overlay
-            topn_asset_rank_v = topn_arec.get("rank") if isinstance(topn_arec, dict) else None
-            topn_asset_score = round(topn_arec.get("score") if isinstance(topn_arec, dict) else -0.0, 4)
-            topn_finding_rank_v = topn_frec.get("rank") if isinstance(topn_frec, dict) else None
-            topn_global_rank_v = global_rank.get(fid) if fid else None
-            topn_exposure_score = inf.get("exposure_score")
-            topn_exposure_conf = inf.get("confidence") or ""
-            topn_externally_facing_inferred = inf.get("externally_facing_inferred")
-            topn_public_service_ports = inf.get("public_service_ports_inferred")
-            ev = inf.get("evidence")
-            if isinstance(ev, (list, tuple)):
-                topn_inference_evidence = ";".join(str(x) for x in ev if x is not None)
-            else:
-                topn_inference_evidence = ""
-
-            rows.append({
-                # ----- Asset Truth -----
-                "asset_id": aid,
-                "asset_hostname": getattr(asset, "hostname", "") or "",
-                "asset_ip": getattr(asset, "ip_address", "") or "",
-                "asset_criticality": getattr(asset, "criticality", "") or "",
-                "asset_avg_risk_score": getattr(asset, "avg_risk_score", "") or "",
-
-                # ---- Finding Truth/Enrichment ----
-                "finding_id": fid,
-                "vuln_id": getattr(finding, "vuln_id", "") or "",
-                "title": getattr(finding, "title", "") or "",
-                "severity": getattr(finding, "severity", "") or "",
-                "authoritative_cve": getattr(finding, "enrichment_source_cve", "") or "",
-                "cves": ";".join(map(str, getattr(finding, "cves", []) or [])),
-                "cvss_score": getattr(finding, "cvss_score", None),
-                "cvss_vector": getattr(finding, "cvss_vector", "") or "",
-                "epss_score": getattr(finding, "epss_score", None),
-                "cisa_kev": bool(getattr(finding, "cisa_kev", False)),
-                "exploit_available": bool(getattr(finding, "exploit_available", False) or getattr(finding, "cisa_kev", False)),
-                "exploit_ids": exploit_ids,
-                "exploit_titles": exploit_titles,
-                "exploit_urls": exploit_urls,
-                "affected_port": getattr(finding, "affected_port", None),
-                "protocol": getattr(finding, "protocol", "") or "",
-
-                "solution": getattr(finding, "solution", "") or "",
-                "description": getattr(finding, "description", "") or "",
-
-                # ---- Scoring Overlay ----
-                "raw_score": raw_score,
-                "operational_score": operational_score,
-                "risk_band": risk_band,
-                "score_reason(s)": score_reason,
-
-                # ---- TopN Overlay ----
-                "topn_rank_basis": topn_rank_basis,
-                "topn_asset_rank": topn_asset_rank_v,
-                "topn_weighted_asset_score": topn_asset_score,
-                "topn_finding_rank": topn_finding_rank_v,
-                "topn_global_rank": topn_global_rank_v,
-                "topn_exposure_score": topn_exposure_score,
-                "topn_exposure_confidence": topn_exposure_conf,
-                "topn_externally_facing_inferred": topn_externally_facing_inferred,
-                "topn_public_service_ports_inferred": topn_public_service_ports,
-                "topn_inference_evidence": topn_inference_evidence
-            })
-
-    if not rows:
+    if total_findings == 0:
         ctx.logger.warning("No findings to export. Skipping CSV write.", extra={"vp_label": "CSV Exporter"})
         return
 
-    fieldnames = list(rows[0].keys())
+    ctx.logger.debug(f"Streaming CSV export for {total_findings} findings", extra={"vp_label": "CSV Exporter"})
 
-    rows.sort(key=lambda r: (r["asset_id"], r["finding_id"]))
-
+    # Stream CSV output - write header first, then process findings one by one
     with ctx.pfh.open_for_write(csv_path, mode = "w", encoding = "utf-8", label = "CSV-Output") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(_sanitize_csv_row(row) if csv_sanitization else row)
+        writer = None
+        rows_written = 0
 
-    ctx.logger.print_success(f"Results exported to CSV: {csv_path.name}")
+        for asset in scan_result.assets:
+            for finding in asset.findings:
+                # Build row data for this finding
+                row = _build_csv_row(asset, finding, scored_findings, topn_asset_rank, topn_finding_rank, global_rank, topn_rank_basis)
+
+                # Initialize writer with fieldnames on first row
+                if writer is None:
+                    fieldnames = list(row.keys())
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                    writer.writeheader()
+
+                # Write the row immediately
+                sanitized_row = _sanitize_csv_row(row) if csv_sanitization else row
+                writer.writerow(sanitized_row)
+                rows_written += 1
+
+                # Progress logging for large exports (every 1000 rows)
+                if rows_written % 1000 == 0:
+                    ctx.logger.debug(f"CSV export progress: {rows_written}/{total_findings} rows", extra={"vp_label": "CSV Exporter"})
+
+    ctx.logger.print_success(f"Results exported to CSV: {csv_path.name} ({rows_written} rows)")
+
+
+def _build_csv_row(asset, finding, scored_findings, topn_asset_rank, topn_finding_rank, global_rank, topn_rank_basis):
+    """
+    Build a single CSV row dictionary for a finding.
+    Extracted for clarity and to enable streaming.
+    """
+    exploit_ids, exploit_titles, exploit_urls = _flatten_exploits(finding.exploit_references)
+
+    fid = getattr(finding, "finding_id", "") or ""
+    aid = getattr(finding, "asset_id", "") or getattr(asset, "asset_id", "") or ""
+
+    srec = scored_findings.get(fid) if fid else None
+    topn_frec = topn_finding_rank.get(fid) if fid else None
+    topn_arec = topn_asset_rank.get(aid) if aid else None
+    inf = topn_arec.get("inference") if isinstance(topn_arec, dict) else None
+    if not isinstance(inf, dict):
+        inf = {}
+
+    # Scoring Overlay
+    raw_score = round(srec.get("raw_score") if isinstance(srec, dict) else -0.0, 4)
+    operational_score = round(srec.get("operational_score") if isinstance(srec, dict) else -0.0, 4)
+    risk_band = srec.get("risk_band") if isinstance(srec, dict) else ""
+    score_reason = srec.get("reason") if isinstance(srec, dict) else ""
+
+    # TopN Overlay
+    topn_asset_rank_v = topn_arec.get("rank") if isinstance(topn_arec, dict) else None
+    topn_asset_score = round(topn_arec.get("score") if isinstance(topn_arec, dict) else -0.0, 4)
+    topn_finding_rank_v = topn_frec.get("rank") if isinstance(topn_frec, dict) else None
+    topn_global_rank_v = global_rank.get(fid) if fid else None
+    topn_exposure_score = inf.get("exposure_score")
+    topn_exposure_conf = inf.get("confidence") or ""
+    topn_externally_facing_inferred = inf.get("externally_facing_inferred")
+    topn_public_service_ports = inf.get("public_service_ports_inferred")
+    ev = inf.get("evidence")
+    if isinstance(ev, (list, tuple)):
+        topn_inference_evidence = ";".join(str(x) for x in ev if x is not None)
+    else:
+        topn_inference_evidence = ""
+
+    return {
+        # ----- Asset Truth -----
+        "asset_id": aid,
+        "asset_hostname": getattr(asset, "hostname", "") or "",
+        "asset_ip": getattr(asset, "ip_address", "") or "",
+        "asset_criticality": getattr(asset, "criticality", "") or "",
+        "asset_avg_risk_score": getattr(asset, "avg_risk_score", "") or "",
+
+        # ---- Finding Truth/Enrichment ----
+        "finding_id": fid,
+        "vuln_id": getattr(finding, "vuln_id", "") or "",
+        "title": getattr(finding, "title", "") or "",
+        "severity": getattr(finding, "severity", "") or "",
+        "authoritative_cve": getattr(finding, "enrichment_source_cve", "") or "",
+        "cves": ";".join(map(str, getattr(finding, "cves", []) or [])),
+        "cvss_score": getattr(finding, "cvss_score", None),
+        "cvss_vector": getattr(finding, "cvss_vector", "") or "",
+        "epss_score": getattr(finding, "epss_score", None),
+        "cisa_kev": bool(getattr(finding, "cisa_kev", False)),
+        "exploit_available": bool(getattr(finding, "exploit_available", False) or getattr(finding, "cisa_kev", False)),
+        "exploit_ids": exploit_ids,
+        "exploit_titles": exploit_titles,
+        "exploit_urls": exploit_urls,
+        "affected_port": getattr(finding, "affected_port", None),
+        "protocol": getattr(finding, "protocol", "") or "",
+
+        "solution": getattr(finding, "solution", "") or "",
+        "description": getattr(finding, "description", "") or "",
+
+        # ---- Scoring Overlay ----
+        "raw_score": raw_score,
+        "operational_score": operational_score,
+        "risk_band": risk_band,
+        "score_reason(s)": score_reason,
+
+        # ---- TopN Overlay ----
+        "topn_rank_basis": topn_rank_basis,
+        "topn_asset_rank": topn_asset_rank_v,
+        "topn_weighted_asset_score": topn_asset_score,
+        "topn_finding_rank": topn_finding_rank_v,
+        "topn_global_rank": topn_global_rank_v,
+        "topn_exposure_score": topn_exposure_score,
+        "topn_exposure_confidence": topn_exposure_conf,
+        "topn_externally_facing_inferred": topn_externally_facing_inferred,
+        "topn_public_service_ports_inferred": topn_public_service_ports,
+        "topn_inference_evidence": topn_inference_evidence
+    }
