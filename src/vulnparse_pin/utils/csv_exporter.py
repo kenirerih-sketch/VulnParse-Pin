@@ -182,6 +182,9 @@ def export_to_csv(ctx: "RunContext", scan_result: ScanResult, *, csv_path: str |
             srec = scored_findings.get(fid) if fid else None
             topn_frec = topn_finding_rank.get(fid) if fid else None
             topn_arec = topn_asset_rank.get(aid) if aid else None
+            inf = topn_arec.get("inference") if isinstance(topn_arec, dict) else None
+            if not isinstance(inf, dict):
+                inf = {}
 
             # Scoring Overlay
             raw_score = round(srec.get("raw_score") if isinstance(srec, dict) else -0.0, 4)
@@ -191,9 +194,18 @@ def export_to_csv(ctx: "RunContext", scan_result: ScanResult, *, csv_path: str |
 
             # TopN Overlay
             topn_asset_rank_v = topn_arec.get("rank") if isinstance(topn_arec, dict) else None
-            topn_asset_score = topn_arec.get("score") if isinstance(topn_arec, dict) else None
+            topn_asset_score = round(topn_arec.get("score") if isinstance(topn_arec, dict) else -0.0, 4)
             topn_finding_rank_v = topn_frec.get("rank") if isinstance(topn_frec, dict) else None
             topn_global_rank_v = global_rank.get(fid) if fid else None
+            topn_exposure_score = inf.get("exposure_score")
+            topn_exposure_conf = inf.get("confidence") or ""
+            topn_externally_facing_inferred = inf.get("externally_facing_inferred")
+            topn_public_service_ports = inf.get("public_service_ports_inferred")
+            ev = inf.get("evidence")
+            if isinstance(ev, (list, tuple)):
+                topn_inference_evidence = ";".join(str(x) for x in ev if x is not None)
+            else:
+                topn_inference_evidence = ""
 
             rows.append({
                 # ----- Asset Truth -----
@@ -233,9 +245,14 @@ def export_to_csv(ctx: "RunContext", scan_result: ScanResult, *, csv_path: str |
                 # ---- TopN Overlay ----
                 "topn_rank_basis": topn_rank_basis,
                 "topn_asset_rank": topn_asset_rank_v,
-                "topn_weighted_asset_score": round(topn_asset_score, 4),
+                "topn_weighted_asset_score": topn_asset_score,
                 "topn_finding_rank": topn_finding_rank_v,
-                "topn_global_rank": topn_global_rank_v
+                "topn_global_rank": topn_global_rank_v,
+                "topn_exposure_score": topn_exposure_score,
+                "topn_exposure_confidence": topn_exposure_conf,
+                "topn_externally_facing_inferred": topn_externally_facing_inferred,
+                "topn_public_service_ports_inferred": topn_public_service_ports,
+                "topn_inference_evidence": topn_inference_evidence
             })
 
     if not rows:

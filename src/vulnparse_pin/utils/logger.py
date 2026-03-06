@@ -204,7 +204,8 @@ class LoggerWrapper:
         self.log_file.success(msg, *args, **kwargs)
 
     def phase(self, phase: str) -> None:
-        pstr = f'======= [PHASE] {phase.upper()} ======='
+        pstr = f'======= {phase.upper()} ======='
+        self.logall.info(pstr, extra={"label": "PHASE"})
         self.log_file.debug(pstr, extra=None)
 
     # ------------- Public log methods (console + file) -------------
@@ -225,12 +226,28 @@ class LoggerWrapper:
         self.logall.debug(msg, extra={"label": label} if label else {})
 
 class EnrichmentMissLogger:
-    def __init__(self, log_file="logs/missed_enrichments.json"):
-        self.log_file = log_file
-        self.misses = {}
+    """
+    Track CVEs that were attempted during enrichment but had no data.
+    """
 
-        # Create log directory if it doesn't exist.
-        os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+    def __init__(self, ctx=None, log_file: str | None = None):
+        # default destination lives under the runtime log directory if we have
+        # a context, otherwise fall back to a relative path.
+        if ctx is not None and log_file is None:
+            try:
+                log_file = str(ctx.paths.log_dir / "missed_enrichments.json")
+            except Exception:
+                log_file = "logs/missed_enrichments.json"
+        self.log_file = log_file or "logs/missed_enrichments.json"
+        self.misses = {}
+        self.pfh = getattr(ctx, "pfh", None) if ctx is not None else None
+
+        # Create parent directory; PFH will handle this if available.
+        if self.pfh:
+            # ensure the directory exists via PFH helpers
+            self.pfh.ensure_writable_file(self.log_file, create_parents=True, overwrite=True, label="Missed Enrichments")
+        else:
+            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
 
     def log_miss(self, cve_id, cisa_kev=False, epss_score=None):
         if cve_id not in self.misses:
@@ -240,5 +257,9 @@ class EnrichmentMissLogger:
             }
 
     def write_log(self):
-        with open(self.log_file, "w", encoding="utf-8") as f:
-            json.dump(self.misses, f, indent=4)
+        if self.pfh:
+            with self.pfh.open_for_write(self.log_file, mode="w", encoding="utf-8", label="Missed Enrichments") as f:
+                json.dump(self.misses, f, indent=4)
+        else:
+            with open(self.log_file, "w", encoding="utf-8") as f:
+                json.dump(self.misses, f, indent=4)

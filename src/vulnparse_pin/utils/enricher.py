@@ -510,7 +510,7 @@ def resolve_cvss_vector(ctx: "RunContext", scanner_vector: str, auth_cve: str, n
             nvd_vector = nvd_record.get("cvss_vector")
             if nvd_vector and is_valid_cvss_vector(nvd_vector):
                 base_score = parse_cvss_vector(ctx, nvd_vector)[0] # type: ignore
-                ctx.logger.print_success(f"[CVSSVector] Using NVD vector for {auth_cve}: {nvd_vector}")
+                ctx.logger.debug(f"[CVSSVector] Using NVD vector for {auth_cve}: {nvd_vector}")
                 return nvd_vector, base_score # type: ignore
 
             # Case 3: Score-only fallback
@@ -520,7 +520,7 @@ def resolve_cvss_vector(ctx: "RunContext", scanner_vector: str, auth_cve: str, n
                 return f"SENTINEL:ScoreOnly:{nvd_score}", nvd_score
 
     # Case 4: Nothing
-    ctx.logger.print_warning(f"[CVSSVector] No CVSS vector available for {auth_cve or 'Unknown'}." " Marking as 'Attempted_NotFound'")
+    ctx.logger.debug(f"[CVSSVector] No CVSS vector available for {auth_cve or 'Unknown'}." " Marking as 'Attempted_NotFound'")
     return "SENTINEL:Attempted_NotFound", current_score
 
 def enrich_scan_results(ctx: "RunContext", results: ScanResult, kev_data: Optional[Dict[str, bool]] = None, epss_data: Optional[Dict[str, float]] = None, offline_mode: bool = False, score_cfg: Dict[Dict[str, float]] = None, nvd_cache: Optional[Any] = None) -> None: # type: ignore
@@ -534,7 +534,7 @@ def enrich_scan_results(ctx: "RunContext", results: ScanResult, kev_data: Option
         offline_mode (Bool): If True, will ignore online fetches for enrichment data pulls.
         nvd_cache (Optional[Any]): Optional parameter, if supplied, will utilize NVD feed cache module for CVE data.
     '''
-    miss_logger = EnrichmentMissLogger()
+    miss_logger = EnrichmentMissLogger(ctx)
 
     baseline_risk_count = 0
 

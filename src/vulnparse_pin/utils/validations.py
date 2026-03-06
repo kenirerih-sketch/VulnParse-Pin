@@ -30,7 +30,14 @@ def is_valid_cve_api_response(data):
     return isinstance(data, dict) and "cve" in data
 
 class FileInputValidator:
-    def __init__(self, file_path, max_size_mb=200, max_nesting=12, allow_large: bool = False):
+    def __init__(self, ctx, file_path, max_size_mb=200, max_nesting=12, allow_large: bool = False):
+        """Validate a JSON input file.
+
+        The validator may use ``ctx.pfh`` for every open to ensure path-policy
+        enforcement; ``ctx`` is required to keep callers honest.
+        """
+        self.ctx = ctx
+        self.pfh = getattr(ctx, "pfh", None)
         self.file_path = file_path
         self.allow_large = allow_large
         self.max_size_bytes = max_size_mb * 1024 * 1024
@@ -39,25 +46,30 @@ class FileInputValidator:
         self.report_json = None
 
     def is_valid_extension_structure(self):
-        if not self.file_path.lower().endswith(".json"):
+        fstr = str(self.file_path)
+        if not fstr.lower().endswith(".json"):
             return False
         try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                return f.read(1).strip() in ['{', '[']
+            if self.pfh:
+                with self.pfh.open_for_read(self.file_path, mode='r', label="File Validator") as f:
+                    return f.read(1).strip() in ['{', '[']
+            else:
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    return f.read(1).strip() in ['{', '[']
         except Exception:
             return False
 
     def validate(self):
         if not os.path.exists(self.file_path):
-            ctx.logger.print_error(f"File does not exist: {self.file_path}")
+            self.ctx.logger.print_error(f"File does not exist: {self.file_path}")
             sys.exit(1)
 
         if not os.access(self.file_path, os.R_OK):
-            ctx.logger.print_error(f"File is not readable: {self.file_path}")
+            self.ctx.logger.print_error(f"File is not readable: {self.file_path}")
             sys.exit(1)
 
         if not self.is_valid_extension_structure():
-            ctx.logger.print_error("File extention or initial structure invalid.")
+            self.ctx.logger.print_error("File extention or initial structure invalid.")
             sys.exit(1)
 
         size_bytes = os.path.getsize(self.file_path)
@@ -75,14 +87,18 @@ class FileInputValidator:
         # Load file now after validation
 
         try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                self.report_json = json.load(f)
-                ctx.logger.print_success(f"File loaded: {self.file_path}")
+            if self.pfh:
+                with self.pfh.open_for_read(self.file_path, mode='r', label="File Validator") as f:
+                    self.report_json = json.load(f)
+            else:
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    self.report_json = json.load(f)
+            self.ctx.logger.print_success(f"File loaded: {self.file_path}")
         except json.JSONDecodeError as e:
-            ctx.logger.print_error(f"Invalid JSON format: {e}")
+            self.ctx.logger.print_error(f"Invalid JSON format: {e}")
             sys.exit(1)
         except Exception as e:
-            ctx.logger.print_error(f"Error reading file: {e}")
+            self.ctx.logger.print_error(f"Error reading file: {e}")
             sys.exit(1)
 
         # Check nest depth

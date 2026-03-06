@@ -39,6 +39,7 @@ from vulnparse_pin.utils.enrichment_stats import stats
 from vulnparse_pin.io.pfhandler import PathLike, PermFileHandler
 from vulnparse_pin.utils.csv_exporter import export_to_csv
 from vulnparse_pin.core.apppaths import AppPaths, ensure_user_configs, load_config
+from vulnparse_pin.utils.banner import print_section_header
 from vulnparse_pin import __version__
 
 KEV_FEED = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
@@ -213,32 +214,32 @@ def _require(condition: bool, msg: str) -> None:
 
 def write_output(ctx: "RunContext", data: Dict, file_path: PathLike, pretty_print=False):
     '''
-    Function to handle file writing operations for JSON results with the option of pretty printing JSON if the --pretty-print argument is True.
+    Write JSON results to disk using the path‑policy handler. 
 
     Args:
-        data ([dict]): JSON dict obj being dumped.
-        file_path ([str]): File path/file that is being written to.
-        pretty_print ([bool]): True if --pretty-print argument is supplied.
-
-    Returns:
-        None: Write operations are completed with status messages printed to console.
+        ctx (RunContext): runtime context carrying ``pfh`` and ``logger``
+        data (dict): JSON-able structure to dump
+        file_path (PathLike): destination path
+        pretty_print (bool): if true, indent the output
     '''
-    with open(file_path, 'w', encoding='utf-8') as f:
+    target = ctx.pfh.ensure_writable_file(file_path, label="JSON Output File",
+                                          create_parents=True, overwrite=True)
+    with ctx.pfh.open_for_write(target, mode="w", encoding="utf-8", label="JSON Output") as f:
         if pretty_print:
-            ctx.logger.print_info("Pretty-printing JSON - Standby...", label = "Output")
+            ctx.logger.print_info("Pretty-printing JSON - Standby...", label="Output")
             try:
                 json.dump(data, f, indent=4)
-                ctx.logger.print_success(f"Parsed results are stored in: {file_path}", label = "Output")
+                ctx.logger.print_success(f"Parsed results are stored in: {target}", label="Output")
             except Exception as e:
-                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label = "Output")
+                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label="Output")
                 sys.exit(1)
         else:
             try:
-                ctx.logger.print_info("[*] Dumping JSON results...")
+                ctx.logger.print_info("[*] Dumping JSON results...", label="Output")
                 json.dump(data, f)
-                ctx.logger.print_success(f"JSON results available in: {file_path}", label = "Output")
+                ctx.logger.print_success(f"JSON results available in: {target}", label="Output")
             except Exception as e:
-                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label = "Output")
+                ctx.logger.print_error(f"Error attempt to dump to JSON: {e}", label="Output")
                 ctx.logger.exception("Exception: %s", e)
                 sys.exit(1)
 
@@ -669,7 +670,7 @@ def main(argv: Optional[Sequence[str]] = None):
 
     # If JSON - Check and validate json structure.
     if str(input_file).endswith(".json"):
-        validator = FileInputValidator(input_file, allow_large=args.allow_large) #TODO: Incorporate CTX here.
+        validator = FileInputValidator(ctx, input_file, allow_large=args.allow_large)
         try:
             input_file = validator.validate()
         except Exception:
@@ -696,7 +697,6 @@ def main(argv: Optional[Sequence[str]] = None):
     logger.print_success(f"Parsed {len(scan_result.assets)} assets, {sum(len(a.findings) for a in scan_result.assets)} findings", label="Normalization")
 
     # Start enrichment pipeline
-    print(" "*25 + "Threat Enrichment Feeds" + " "*25)
     logger.phase("Threat-Intel Enrichment Feeds")
     kev_data = None
     epss_data = None
@@ -704,13 +704,13 @@ def main(argv: Optional[Sequence[str]] = None):
     # Load Exploit-DB if flagged.
     exploit_data = None
     if args.enrich_exploit and args.exploit_source == "online":
-        print("=" * 25 + "Exploit-DB" + "=" * 25)
+        print_section_header("Exploit-DB")
         logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{args.exploit_source.upper()}{Style.RESET_ALL} source...", label = "Exploit-DB Loader")
 
         exploit_data = load_exploit_data(ctx, source=args.exploit_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
         logger.print_success(f"Loaded Exploit-DB data ({len(exploit_data)} CVEs with exploits)\n", label="Exploit-DB Loader")
     elif args.enrich_exploit and args.exploit_source == "offline":
-        print("=" * 25 + "Exploit-DB" + "=" * 25)
+        print_section_header("Exploit-DB")
         logger.print_info(f"Loading Exploit-DB data from {Fore.LIGHTYELLOW_EX}{ctx.pfh.format_for_log(exploit_db)}{Style.RESET_ALL}...", label="Local Exploit-DB Cache")
 
         exploit_data = load_exploit_data(ctx, source=exploit_db, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
@@ -722,7 +722,7 @@ def main(argv: Optional[Sequence[str]] = None):
 
     if not args.no_nvd and cfg_yaml.get("feed_cache", {}).get("nvd").get("enabled"):
         if ctx.services.nvd_cache is not None:
-            print("=" * 25 + "National Vulnerability Database (NVD)" + "=" * 25)
+            print_section_header("National Vulnerability Database (NVD)")
             nvd_policy = nvd_policy_from_config(cfg_yaml)
             logger.print_info(f"Policy: {nvd_policy}", label="NVD Cache Policy")
             years_seen = extract_cve_years(ctx, scan_result)
@@ -735,7 +735,20 @@ def main(argv: Optional[Sequence[str]] = None):
             else:
                 # Initialize NVD if enabled
                 t0 = time.perf_counter()
+                
+                # Extract unique CVEs from scan for efficient filtering
+                cves_in_scan = set()
+                for asset in scan_result.assets:
+                    for finding in asset.findings:
+                        if finding.cves:
+                            cves_in_scan.update(finding.cves)
+                
                 ctx.logger.debug("Years seen during normalization: %s, Years Normalized: %s Years Selected: %s", years_seen, normalized_years, years_to_load, extra={"vp_label": "NVD Cache Loader"})
+                ctx.logger.print_info(
+                    f"Scan contains {len(cves_in_scan)} unique CVEs; filtering NVD index...",
+                    label="NVD Optimization"
+                )
+                
                 ctx.services.nvd_cache.refresh(
                     config=cfg_yaml,
                     feed_cache=feed_cache,
@@ -743,6 +756,7 @@ def main(argv: Optional[Sequence[str]] = None):
                     offline=(args.mode == "offline"),
                     years=years_to_load,
                     include_modified=include_modified,
+                    target_cves=cves_in_scan,
                     )
                 t1 = time.perf_counter()
                 logger.debug(f"NVD Load time: {(t1 - t0)}", extra={"vp_label": "Performance"})
@@ -751,18 +765,21 @@ def main(argv: Optional[Sequence[str]] = None):
 
     # 1 Load enrichment data sources
     if kev_source:
-        print("=" * 25 + "CISA Known Exploited Vulnerabilities (KEV)" + "=" * 25)
+        
+        print_section_header("CISA Known Exploited Vulnerabilities (KEV)")
         kev_data = load_kev(ctx, path_url=kev_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
 
     if epss_source:
-        print("=" * 25 + "FIRST Exploit Prediction Scoring System (EPSS)" + "=" * 25)
+        
+        print_section_header("FIRST Exploit Prediction Scoring System (EPSS)")
         epss_data = load_epss(ctx, path_url=epss_source, force_refresh=args.refresh_cache, allow_regen=args.allow_regen)
 
 
     # 2 Apply exploit enrichments
     logger.phase("Exploit Enrichment")
     if args.enrich_exploit and exploit_data:
-        print("="*25 + "Exploit Enrichment Results" + "="*25)
+        
+        print_section_header("Exploit Enrichment Results")
         for asset in scan_result.assets:
             enriched_findings = enrich_exploit_availability(ctx, asset.findings, exploit_data)
             asset.findings = enriched_findings
@@ -776,14 +793,17 @@ def main(argv: Optional[Sequence[str]] = None):
     # 4 Apply enrichments
     logger.phase("Enrichment Pipeline")
     if kev_data or epss_data and (args.enrich_kev or args.enrich_epss):
-        print(" "*25 + "Enrichment Pipeline" + " "*25)
+        
         enrich_scan_results(ctx, scan_result, kev_data, epss_data, offline_mode = args.mode == "offline", score_cfg = ctx.services.scoring_config, nvd_cache = nvd_cache)
         logger.print_success("All enrichments Applied") #TODO: Move scoring cfg out
 
 
     # 5 Passes
     # Scoring Pass
+    logger.phase("Dervied Pass Pipeline")
+    logger.print_info(f"Executing derived passes pipeline — Passes: {[p for p in passesList] if len(passesList) > 1 else passesList[0]}", label = "Pass Pipeline")
     scan_result = passOrchestrator.run_all(ctx = ctx, scan = scan_result)
+    logger.print_success("Derived Passes Pipeline complete.", label = "Pass Pipeline")
 
     # 6 Do Post-Processing enrichment status update.
     for asset in scan_result.assets:
@@ -810,16 +830,16 @@ def main(argv: Optional[Sequence[str]] = None):
 
     if args.output or args.output_csv:
         logger.phase("Output")
-        print("="*25 + "Output" + "="*25)
+
 
     if args.output:
         if args.presentation and not scan_result.derived.get("Scoring@1.0"):
             raise RuntimeError("Presentation overlay requested, but Scoring@1.0 pass result not found.")
         if args.presentation:
             out = materialize_presentation(scan_result, overlay_mode=args.overlay_mode, scoring_pass_key="Scoring@1.0")
-            write_output(ctx, data=out, file_path=args.output, pretty_print=args.pretty_print)
+            write_output(ctx, data=out, file_path=json_output, pretty_print=args.pretty_print)
         else:
-            write_output(ctx, data=asdict(scan_result), file_path=args.output, pretty_print=args.pretty_print)
+            write_output(ctx, data=asdict(scan_result), file_path=json_output, pretty_print=args.pretty_print)
 
     if args.output_csv:
         export_to_csv(ctx, scan_result, csv_path = csv_output, csv_sanitization = csv_sanitization_enabled)

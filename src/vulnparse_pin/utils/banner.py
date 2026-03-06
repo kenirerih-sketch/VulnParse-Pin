@@ -42,3 +42,24 @@ def print_banner():
 
     print(banner)
     print("=" * 75)
+
+
+def print_section_header(title: str, width: int = 60):
+    """Display a simple console header for a section.
+
+    ``width`` defines the total character width of the line; the title will be
+    centered within equals signs.  This replaces the repeated ad-hoc calls in
+    :mod:`main`.
+
+    Examples::
+
+        >>> print_section_header("Exploit-DB")
+        ============ Exploit-DB ============
+    """
+    if width < len(title) + 2:
+        # too narrow, just print the title
+        print(title)
+        return
+    rem = width - len(title) - 2
+    half = rem // 2
+    print("=" * half + f" {title} " + "=" * (rem - half))

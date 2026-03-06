@@ -137,9 +137,10 @@ class TopNPass:
         for asset in scan.assets:
             for finding in asset.findings:
                 maps.setdefault(finding.asset_id, []).append(finding.finding_id)
-            for aid, _ in maps.items(): # TODO:VERIFY
-                maps[aid].sort()
-            return maps
+
+        for aid, _ in maps.items(): # TODO:VERIFY
+            maps[aid].sort()
+        return maps
 
     def _get_finding_score_record(self, scoring: "DerivedPassResult", finding_id: str) -> Optional[Dict[str, "ScoredFinding"]]:
         """

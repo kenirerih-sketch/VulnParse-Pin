@@ -51,3 +51,71 @@ def test_sanitize_csv_row_mixed_types():
     assert safe["int_value"] == 10
     assert safe["float_value"] == 9.8
     assert safe["none_value"] is None
+
+
+def test_csv_unicode_whitespace_normalization():
+    """Leading unicode whitespace should still result in formula-prefixing."""
+    val = "\u2000=evil"
+    out = _sanitize_csv_cell(val)
+    # original whitespace should be preserved and a quote inserted before stripped portion
+    assert "'" in out
+    assert out.strip().endswith("evil")
+
+
+def test_csv_crlf_injection_neutralized():
+    """Newlines and carriage returns should be escaped with literal \n."""
+    inp = "line1\nline2\r\nline3"
+    assert _sanitize_csv_cell(inp) == "line1\\nline2\\nline3"
+
+
+def test_csv_preserves_numeric_types():
+    """Numeric values in rows should not be coerced to strings during sanitization."""
+    row = {"num": 123, "flt": 4.56, "txt": "hello"}
+    safe = _sanitize_csv_row(row)
+    assert isinstance(safe["num"], int)
+    assert isinstance(safe["flt"], float)
+    assert safe["txt"] == "hello"
+
+
+def test_csv_export_includes_derived_fields_when_present(tmp_path):
+    """When a scan has TopN/scoring results the resulting CSV should contain ranking columns."""
+    from vulnparse_pin.utils.csv_exporter import export_to_csv
+    from datetime import datetime
+    from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
+    from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
+    from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
+    from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
+    from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
+    from vulnparse_pin.core.classes.pass_classes import PassRunner
+    from vulnparse_pin.utils.logger import LoggerWrapper
+    from vulnparse_pin.io.pfhandler import PermFileHandler
+
+    # build basic context and scan with one finding
+    logger = LoggerWrapper(log_file=str(tmp_path / "test.log"))
+    pfh = PermFileHandler(logger, root_dir=tmp_path, allowed_roots=[tmp_path])
+    ctx = RunContext(paths=AppPaths.resolve(portable=True), pfh=pfh, logger=logger)
+    meta = ScanMetaData(source="unit", scan_date=datetime.now(), asset_count=0, vulnerability_count=0)
+    f = Finding(finding_id="F", vuln_id="V", title="T", description="D", severity="Low", cves=[], asset_id="A")
+    asset = Asset(hostname="A", ip_address="1.2.3.4", findings=[f])
+    scan = ScanResult(scan_metadata=meta, assets=[asset])
+
+    # run passes to populate derived
+    policy = ScoringPolicyV1(
+        epss_scale=1, epss_min=0, epss_max=1,
+        kev_evd=1, exploit_evd=1,
+        band_critical=10, band_high=7, band_medium=4, band_low=1,
+        asset_aggregation="max", w_epss_high=1, w_epss_medium=1, w_kev=1, w_exploit=1,
+        max_raw_risk=10, max_op_risk=10,
+    )
+    scoring = ScoringPass(policy)
+    topn = TopNPass(_safe_fallback_config())
+    runner = PassRunner([scoring, topn])
+    scan = runner.run_all(ctx, scan)
+
+    # export
+    csvfile = tmp_path / "out.csv"
+    export_to_csv(ctx, scan, csv_path=csvfile)
+
+    text = csvfile.read_text(encoding="utf-8")
+    assert "topn_asset_rank" in text
+    assert "topn_finding_rank" in text

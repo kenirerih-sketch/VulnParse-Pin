@@ -10,3 +10,5 @@ logs/
 !config/**
 .history/
 .*
+*.md
+debug_topn.py

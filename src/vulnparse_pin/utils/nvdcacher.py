@@ -11,7 +11,15 @@ import gzip
 import json
 from datetime import datetime
 import re
+import io
+import threading
+import concurrent.futures, os
 from typing import Any, Dict, List, TYPE_CHECKING, Optional, Set
+try:
+    import ijson
+except ImportError as exc:
+    ijson = None
+    print(f"ijson dependency is missing; for runtime optimization, install ijson 'pip install ijson': {exc}")
 
 if TYPE_CHECKING:
     from vulnparse_pin.core.classes.dataclass import RunContext
@@ -29,8 +37,11 @@ class NVDFeedCache:
     def __init__(self, ctx: "RunContext") -> None:
         self.ctx = ctx
         self.lookup: Dict[str, Dict[str, Any]] = {}
+        self.target_cves: Optional[Set[str]] = None  # CVEs to index (if filtering)
+        # lock to protect lookup when parsing in parallel
+        self._lock = threading.Lock()
 
-    def refresh(self, *, config: dict, feed_cache, refresh_cache: bool, offline: bool, years: Optional[Set[int]] = None, include_modified: bool = True) -> None:
+    def refresh(self, *, config: dict, feed_cache, refresh_cache: bool, offline: bool, years: Optional[Set[int]] = None, include_modified: bool = True, target_cves: Optional[Set[str]] = None) -> None:
         feeds = nvd_feed_plan(config)
 
         if not feeds:
@@ -44,7 +55,16 @@ class NVDFeedCache:
                 return
 
         missing: List[str] = []
+        self.target_cves = target_cves
 
+        if target_cves:
+            self.ctx.logger.debug(
+                f"NVD index filtered to {len(target_cves)} CVEs from scan",
+                extra={"vp_label": "NVD Optimization"}
+            )
+
+        # first resolve all feed paths so that we can handle missing ones
+        resolved_paths: List[str] = []
         for f in feeds:
             try:
                 path = feed_cache.resolve_nvd_feed(
@@ -56,56 +76,130 @@ class NVDFeedCache:
             except FileNotFoundError:
                 missing.append(f["fname"])
                 continue
+            resolved_paths.append(path)
 
-            self._parse_feed(path)
+        # parse each path; use threads when there is more than one to reduce wall time
+        if resolved_paths:
+            if len(resolved_paths) > 1:
+                max_workers = min(len(resolved_paths), os.cpu_count() or 1)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    futures = {pool.submit(self._parse_feed, p): p for p in resolved_paths}
+                    for fut in concurrent.futures.as_completed(futures):
+                        # propagate exceptions
+                        fut.result()
+            else:
+                self._parse_feed(resolved_paths[0])
 
         if offline and missing:
             self.ctx.logger.warning(
                 f"Offline mode: {len(missing)} feed(s) missing: {', '.join(missing)}."
             )
-    # NOTE(perf): NVD feed parse builds in-mem O(1) index at startup (~2-4s).
-    # Deferred until GA+: SQLite-backed indexing (persistent db, incremental refresh)
+    # NOTE(perf): NVD feed parse builds in-mem O(1) index at startup.
+    # Uses ijson streaming to parse one CVE at a time (no full load into RAM).
+    # With target_cves filtering, only parses CVEs needed by the scan.
     def _parse_feed(self, path: str) -> None:
-        """Parse NVD 2.0 feed into lookup dict."""
+        """Parse NVD 2.0 feed into lookup dict with streaming and optional CVE filtering."""
         ctx = self.ctx
-        with ctx.pfh.open_for_read(path, mode="rb", label = "NVD Feed (.json.gz)") as raw:
-            with gzip.open(raw, mode="rt", encoding="utf-8") as f:
-                data = json.load(f)
+        parsed_count = 0
+        skipped_count = 0
 
-        # Parse pertinent information from feeds.
-        for item in data.get("vulnerabilities", []):
-            cve = (item or {}).get("cve", {}) or {}
-            cve_id = cve.get("id")
-            if not cve_id:
-                continue
-            # Description
-            desc = ""
-            descs = cve.get("descriptions") or []
-            if descs:
-                desc = (descs[0] or {}).get("value", "") or ""
-            # Published/lastMod
-            published = cve.get("published")
-            last_mod = cve.get("lastModified")
-            # CVSS Metrics
-            metrics = cve.get("metrics", {}) or {}
-            cvss, vector = None, None
-            # Break out CVSS Version Prioritization
-            if "cvssMetricV31" in metrics:
-                cvss, vector = self._choose_cvss(metrics["cvssMetricV31"])
-            elif "cvssMetricV30" in metrics:
-                cvss, vector = self._choose_cvss(metrics["cvssMetricV30"])
-            elif "cvssMetricV2" in metrics:
-                cvss, vector = self._choose_cvss(metrics["cvssMetricV2"])
+        # Determine if this feed is year-specific so we can fast-skip
+        year = None
+        path_str = str(path)
+        m = re.search(r"year\.(\d{4})", path_str)
+        if m:
+            try:
+                year = int(m.group(1))
+            except ValueError:
+                year = None
 
-            # Create O1 Lookup
-            self.lookup[cve_id] = {
-                "id": cve_id,
-                "description": desc,
-                "cvss_score": cvss,
-                "cvss_vector": vector,
-                "published": published,
-                "last_modiifed": last_mod,
-            }
+        # Compute remaining targets for this feed (used for early termination)
+        remaining: Optional[Set[str]] = None
+        if self.target_cves is not None:
+            if year is not None:
+                prefix = f"CVE-{year}-"
+                remaining = {c for c in self.target_cves if c.startswith(prefix)}
+                if not remaining:
+                    # nothing to index in this year's file
+                    ctx.logger.debug(
+                        f"Skipping {year} feed; no CVEs from scan match this year.",
+                        extra={"vp_label": "NVD Optimization"}
+                    )
+                    return
+            else:
+                # modified feed: we need to look for any remaining CVEs
+                remaining = set(self.target_cves)
+
+        # open_for_read already validates path; suppress redundant log message
+        with ctx.pfh.open_for_read(path, mode="rb", label="NVD Feed (.json.gz)", log=False) as raw:
+            # Open gzip in binary mode for ijson efficiency
+            with gzip.open(raw, mode="rb") as f:
+                # Use ijson for streaming if available, fallback to json.load
+                if ijson is not None:
+                    vulnerabilities = ijson.items(f, "vulnerabilities.item")
+                else:
+                    text_f = io.TextIOWrapper(f, encoding="utf-8")
+                    data = json.load(text_f)
+                    vulnerabilities = data.get("vulnerabilities", [])
+
+                # Parse pertinent information from feeds.
+                for item in vulnerabilities:
+                    cve = (item or {}).get("cve", {}) or {}
+                    cve_id = cve.get("id")
+                    if not cve_id:
+                        continue
+
+                    # Early exit: skip if filtering and CVE not in target set
+                    if self.target_cves is not None and cve_id not in self.target_cves:
+                        skipped_count += 1
+                    else:
+                        parsed_count += 1
+
+                        # Description
+                        desc = ""
+                        descs = cve.get("descriptions") or []
+                        if descs:
+                            desc = (descs[0] or {}).get("value", "") or ""
+                        # Published/lastMod
+                        published = cve.get("published")
+                        last_mod = cve.get("lastModified")
+                        # CVSS Metrics
+                        metrics = cve.get("metrics", {}) or {}
+                        cvss, vector = None, None
+                        # Break out CVSS Version Prioritization
+                        if "cvssMetricV31" in metrics:
+                            cvss, vector = self._choose_cvss(metrics["cvssMetricV31"])
+                        elif "cvssMetricV30" in metrics:
+                            cvss, vector = self._choose_cvss(metrics["cvssMetricV30"])
+                        elif "cvssMetricV2" in metrics:
+                            cvss, vector = self._choose_cvss(metrics["cvssMetricV2"])
+
+                        # Create O(1) Lookup (thread-safe)
+                        with self._lock:
+                            self.lookup[cve_id] = {
+                                "id": cve_id,
+                                "description": desc,
+                                "cvss_score": cvss,
+                                "cvss_vector": vector,
+                                "published": published,
+                                "last_modified": last_mod,
+                            }
+
+                        if remaining is not None and cve_id in remaining:
+                            remaining.remove(cve_id)
+                            if not remaining:
+                                ctx.logger.debug(
+                                    f"Early termination: all target CVEs for {'year ' + str(year) if year else 'modified feed'} indexed after {parsed_count + skipped_count} items",
+                                    extra={"vp_label": "NVD Optimization"}
+                                )
+                                break
+
+        # Log parse statistics
+        if self.target_cves is not None and skipped_count > 0:
+            ctx.logger.debug(
+                f"NVD parse: indexed {parsed_count} CVEs, skipped {skipped_count} (not in scan)",
+                extra={"vp_label": "NVD Optimization"}
+            )
 
     def _choose_cvss(self, metrics_list) -> tuple | tuple[None, None]:
         """Pick Primary cvss first, fallback to Secondary."""
