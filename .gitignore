@@ -2,6 +2,10 @@
 *.json
 *.csv
 *.log
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
 vulnparse_pin.log
 data/
 nvd_cache/
