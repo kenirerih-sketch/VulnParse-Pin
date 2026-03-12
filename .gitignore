@@ -14,4 +14,8 @@ logs/
 !config/**
 .history/
 .*
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
 !sbom*
