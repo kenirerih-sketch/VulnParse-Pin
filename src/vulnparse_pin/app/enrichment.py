@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict
 
 from colorama import Fore, Style
 
@@ -127,10 +129,47 @@ def run_enrichment_pipeline(
     logger.phase("Exploit Enrichment")
     if args.enrich_exploit and exploit_data:
         print_section_header("Exploit Enrichment Results")
-        for asset in scan_result.assets:
-            enriched_findings = enrich_exploit_availability(ctx, asset.findings, exploit_data)
-            asset.findings = enriched_findings
-        logger.print_success("Exploit enrichment applied to findings.", label="Enrichment")
+        
+        # Parallel exploit enrichment with batch logging
+        asset_stats: List[Dict[str, int]] = []
+        num_assets = len(scan_result.assets)
+        
+        # Use parallel processing for large asset counts
+        if num_assets > 10:
+            max_workers = min(8, num_assets)
+            logger.print_info(f"Enriching {num_assets:,} assets in parallel (workers={max_workers})...", label="Exploit Enrichment")
+            
+            def enrich_asset(asset):
+                enriched, asset_stat = enrich_exploit_availability(ctx, asset.findings, exploit_data, asset.asset_id)
+                return asset, enriched, asset_stat
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(enrich_asset, asset): asset for asset in scan_result.assets}
+                
+                for future in as_completed(futures):
+                    asset, enriched_findings, asset_stat = future.result()
+                    asset.findings = enriched_findings
+                    asset_stats.append(asset_stat)
+        else:
+            # Sequential processing for small asset counts
+            for asset in scan_result.assets:
+                enriched_findings, asset_stat = enrich_exploit_availability(ctx, asset.findings, exploit_data, asset.asset_id)
+                asset.findings = enriched_findings
+                asset_stats.append(asset_stat)
+        
+        # Aggregate and log summary
+        total_exploits = sum(s["exploit_found"] for s in asset_stats)
+        total_no_exploit = sum(s["no_exploit"] for s in asset_stats)
+        total_no_cves = sum(s["no_cves"] for s in asset_stats)
+        total_kev_marked = sum(s["kev_marked"] for s in asset_stats)
+        total_findings = sum(s["total_findings"] for s in asset_stats)
+        
+        logger.print_success(
+            f"Exploit enrichment complete: {total_exploits:,} exploits found, "
+            f"{total_no_exploit:,} not found, {total_no_cves:,} no CVEs, "
+            f"{total_kev_marked:,} KEV-marked across {num_assets:,} assets ({total_findings:,} findings)",
+            label="Enrichment"
+        )
 
     apply_heuristic_exploit_tags_batch(ctx, scan_result)
 

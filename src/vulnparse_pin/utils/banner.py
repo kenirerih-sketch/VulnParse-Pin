@@ -1,5 +1,5 @@
 # VulnParse-Pin – Vulnerability Intelligence and Decision Support Engine
-# Copyright (C) 2026 QTShade
+# Copyright (C) 2026 Quashawn Ashley
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -34,9 +34,9 @@ def print_banner():
 
                 VulnParse-Pinnacle {__version__}
                 Enrich ✦ Prioritize ✦ Defend
-              {selected_subtitle}
-                    Developer: QTShade
-                Copyright (C) 2026 QTShade
+               {selected_subtitle}
+                Developer: Quashawn Ashley
+              Copyright (C) 2026 Quashawn Ashley
     """
 
 

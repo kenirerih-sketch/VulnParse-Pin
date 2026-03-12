@@ -1,5 +1,5 @@
 # VulnParse-Pin – Vulnerability Intelligence and Decision Support Engine
-# Copyright (C) 2026 QTShade
+# Copyright (C) 2026 Quashawn Ashley
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -58,22 +58,36 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file: Path = Non
     Returns:
         None
     '''
-    def _get_scoring(scan: "ScanResult") -> Dict | None:
+    def _get_scoring(scan: "ScanResult") -> Dict[str, Any]:
         res = scan.derived.get("Scoring@1.0")
         if not res:
-            return None
+            return {}
         data = res.data or {}
         if not isinstance(data, dict):
             raise TypeError("Not a dict")
         return data
+
+    def _as_dict(value: Any) -> Dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    def _as_float(value: Any) -> Optional[float]:
+        return value if isinstance(value, (int, float)) else None
+
+    def _format_optional_score(label: str, value: Optional[float], missing_text: str) -> str:
+        if value is None:
+            return f" {label:<31}: {missing_text}"
+        return f" {label:<31}: {value:.2f}"
+
     # Pull from scoring pass
     scoring = _get_scoring(scan_result)
-    scored_findings = scoring.get("scored_findings", {}) or {}
-    coverage = scoring.get("coverage", {}) or {}
-    highest_asset = scoring.get("highest_risk_asset", {}) or {}
-    highest_asset_raw = scoring.get("highest_risk_asset_score", {}) or {}
-    avg_raw = scoring.get("avg_scored_risk", {}) or {}
-    avg_op = scoring.get("avg_operational_risk", {}) or {}
+    scored_findings = _as_dict(scoring.get("scored_findings"))
+    coverage = _as_dict(scoring.get("coverage"))
+    highest_asset = scoring.get("highest_risk_asset")
+    highest_asset_raw = _as_float(scoring.get("highest_risk_asset_score"))
+    avg_raw = _as_float(scoring.get("avg_scored_risk"))
+    avg_op = _as_float(scoring.get("avg_operational_risk"))
+    coverage_ratio = _as_float(coverage.get("coverage_ratio")) or 0.0
+    scored_count = coverage.get("scored_findings", 0)
     band_counts = {
         "Critical": 0,
         "High": 0,
@@ -90,8 +104,6 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file: Path = Non
     exploit_findings = sum(
         sum(1 for f in asset.findings if getattr(f, 'exploit_available', False)) for asset in scan_result.assets
         )
-    avg_risk_score = avg_raw
-
     enriched_findings = sum(
         sum(1 for f in asset.findings if f.enriched) for asset in scan_result.assets
     )
@@ -101,14 +113,17 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file: Path = Non
     print("="*60)
     print(f" Total Assets Analyzed            : {total_assets:,}")
     print(f" Total Findings Triaged           : {total_findings:,}")
-    print(f" Average Asset Risk Score         : {avg_risk_score:.2f}" if avg_risk_score > 0.0 else " Average Asset Risk Score         : Not Computed (Insufficient Scoring Inputs)")
-    print(f" Average Operational Risk Score   : {avg_op:.2f}" if avg_op > 0.0 else " Average Operational Risk Score                  : Not Available (Insufficient Scoring Inputs)")
-    print(f" Scoring Coverage                 : {coverage.get("coverage_ratio"):.2%}")
-    print(f" # of Scored Findings             : {coverage.get("scored_findings")}")
+    print(_format_optional_score("Average Asset Risk Score", avg_raw, "Not Computed (Insufficient Scoring Inputs)"))
+    print(_format_optional_score("Average Operational Risk Score", avg_op, "Not Available (Insufficient Scoring Inputs)"))
+    print(f" Scoring Coverage                 : {coverage_ratio:.2%}")
+    print(f" # of Scored Findings             : {scored_count:,}")
     if highest_asset:
-        print(f" Highest Risk Asset               : {highest_asset} (Score: {highest_asset_raw:.2f})" if highest_asset_raw > 0.0 else f" Highest Risk Asset               : {highest_asset} (Score: Not Computed (Insufficient Scoring Inputs))")
+        if highest_asset_raw is not None:
+            print(f" Highest Risk Asset               : {highest_asset} (Score: {highest_asset_raw:.2f})")
+        else:
+            print(f" Highest Risk Asset               : {highest_asset} (Score: Not Computed (Insufficient Scoring Inputs))")
     else:
-        print(" Highest Risk Asset: N/A")
+        print(" Highest Risk Asset               : N/A")
     print("-" * 60)
     print(f"💣 Findings with Known Exploits   : {exploit_findings:,}")
     print(f"🔥 Critical Risk Findings         : {band_counts.get("Critical"):,}")
@@ -152,12 +167,14 @@ def print_summary_banner(ctx: "RunContext", scan_result, output_file: Path = Non
 
     print("="*60 + "\n")
 
-    ctx.logger.info(f"Assets Analyzed: {total_assets:,},"
-                f"Findings Triaged: {total_findings:,},"
-                f"Average Risk Score: {avg_risk_score:.2f},"
-                f"Highest Risk Asset: {highest_asset if highest_asset else 'N/A'},"
-                f"Critical: {band_counts.get("Critical"):,}, High: {band_counts.get("High"):,}, Medium: {band_counts.get("Medium"):,}, Low: {band_counts.get("Low"):,}, Informational: {band_counts.get("Informational"):,}"
-                )
+    avg_risk_log = f"{avg_raw:.2f}" if avg_raw is not None else "N/A"
+    ctx.logger.info(
+        f"Assets Analyzed: {total_assets:,},"
+        f"Findings Triaged: {total_findings:,},"
+        f"Average Risk Score: {avg_risk_log},"
+        f"Highest Risk Asset: {highest_asset if highest_asset else 'N/A'},"
+        f"Critical: {band_counts.get('Critical'):,}, High: {band_counts.get('High'):,}, Medium: {band_counts.get('Medium'):,}, Low: {band_counts.get('Low'):,}, Informational: {band_counts.get('Informational'):,}"
+    )
 
 def format_runtime(seconds: float) -> str:
     return _format_runtime(seconds)
