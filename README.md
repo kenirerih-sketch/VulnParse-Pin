@@ -71,7 +71,7 @@ What you get:
 - Prioritized outputs for technical and executive review
 - JSON, CSV, and Markdown reporting options
 
-![Results Snippet](docs/img/results_snippet.jpg)
+![Results Snippet](docs/img/results_snippet.JPG)
 
 See the [Getting Started In 5 Minutes](docs/Getting%20Started%20In%205%20Minutes.md) guide for more details and options.
 
