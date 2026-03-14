@@ -18,7 +18,7 @@ dependencies = ["defusedxml>=0.7.1", "cvss>=3.6", "requests>=2.32.5", "ruamel.ya
 license = { text = "AGPL-3.0-or-later" }
 classifiers = [
     "Intended Audience :: Information Technology",
-    "Intended Audience :: System Architecture",
+    "Intended Audience :: System Administrators",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
