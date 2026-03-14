@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -59,7 +58,8 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vulnparse-pin",
         description="VulnParse-Pin: Enrich, prioritize, and triage vulnerability scan results.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
     gen_group = parser.add_argument_group("General Options", "General runtime flags.")
     enrich_group = parser.add_argument_group("Enrichment", "Vulnerability enrichment flags.")
@@ -90,8 +90,8 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     file_group.add_argument("--forbid-symlinks_write", "-Sw", action="store_true", default=True, help="Disables following symlinks when resolving paths during write operations.")
     file_group.add_argument("--enforce-root-read", "-err", action="store_true", help="Enforces read operations only on files located within the list of acceptable roots.")
     file_group.add_argument("--enforce-root-write", "-erw", action="store_true", default=True, help="Enforces write operations only on files located within the list of acceptable roots.")
-    file_group.add_argument("--file-mode", "-fm", type=parse_mode, default=0o700, nargs=1, metavar="0o700", help="POSIX ONLY - Enables file-level chmod permissions on file write operations (octal). Default 0700")
-    file_group.add_argument("--dir-mode", "-dm", type=parse_mode, default=0o760, nargs=1, metavar="0o760", help="POSIX ONLY - Enables file-level chmod permissions on file write operations (octal). Default 0760")
+    file_group.add_argument("--file-mode", "-fm", type=parse_mode, default=0o700, metavar="0o700", help="POSIX ONLY - Enables file-level chmod permissions on file write operations (octal). Default 0700")
+    file_group.add_argument("--dir-mode", "-dm", type=parse_mode, default=0o760, metavar="0o760", help="POSIX ONLY - Enables file-level chmod permissions on file write operations (octal). Default 0760")
     file_group.add_argument("--debug-path-policy", action="store_true", help="Display path policy for PFHandler and exit.")
     port_group.add_argument("--portable", "-P", action="store_true", help="Use ./data folder next to executable/script for application data(config/cache/logs/output).")
     output_group.add_argument("--presentation", action="store_true", help = "Export a presentation-friendly JSON view by overlaying derived pass output onto findings. (Does not change provenence of artifacts in memory)")
@@ -106,13 +106,13 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         if not os.access(output_dir, os.W_OK):
             parser.error(f"Output directory '{output_dir}' is not writable.")
 
-    if ("--overlay-mode" in sys.argv) and (not args.presentation):
+    if args.overlay_mode != "flatten" and (not args.presentation):
         parser.error("--overlay-mode requires --presentation")
 
-    if ("--output-csv" not in sys.argv) and (args.no_csv_sanitize):
+    if (not args.output_csv) and args.no_csv_sanitize:
         parser.error("[Security Warning] --no-csv-sanitize requires --output-csv")
 
-    if (args.exploit_source == "offline") and ("--exploit-db" not in sys.argv):
+    if (args.exploit_source == "offline") and (not args.exploit_db):
         parser.error("Offline exploit source requires --exploit-db to be set.")
 
     return args

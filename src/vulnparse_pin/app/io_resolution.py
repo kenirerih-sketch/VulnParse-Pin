@@ -86,7 +86,7 @@ def resolve_io_paths_and_modes(args, runtime: RuntimeBootstrapState, kev_feed: s
     if args.enrich_exploit and args.exploit_source == "offline":
         if args.exploit_db is not None and Path(args.exploit_db).suffix == ".csv":
             src = pfh.ensure_readable_file(args.exploit_db, label="Exploit-DB Input File")
-            dst = pfh.ensure_writable_file(paths.cache_dir / "Exploit_DB" / "files_exploits.csv", label="Exploit-DB Cache File", create_parents=True, overwrite=True)
+            dst = pfh.ensure_writable_file(paths.cache_dir / "exploit_db" / "files_exploit.csv", label="Exploit-DB Cache File", create_parents=True, overwrite=True)
 
             with pfh.open_for_read(src, mode="rb", label="Exploit-DB Input File") as r, pfh.open_for_write(dst, mode="wb", label="Exploit-DB Cached File") as w:
                 w.write(r.read())

@@ -8,6 +8,7 @@
 # See the LICENSE file for full terms.
 
 import json
+from multiprocessing import freeze_support
 from pathlib import Path
 import time
 from dataclasses import fields, is_dataclass
@@ -398,5 +399,7 @@ def main(argv: Optional[Sequence[str]] = None):
 
 
 if __name__ == "__main__":
+    # Ensure spawned worker processes bootstrap correctly in frozen binaries.
+    freeze_support()
     rc = main(sys.argv[1:])
     raise SystemExit(rc)
