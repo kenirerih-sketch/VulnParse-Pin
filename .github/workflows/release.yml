@@ -61,6 +61,11 @@ jobs:
           mkdir -p dist/sbom
           cyclonedx-py environment > dist/sbom/vulnparse-pin-sbom.json
 
+      - name: Install GPG
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gnupg
+
       - name: Generate SHA256SUMS
         working-directory: dist
         run: |
@@ -84,7 +89,7 @@ jobs:
           --armor --detach-sign SHA256SUMS
 
       - name: Publish Github Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.4.0
         with:
           generate_release_notes: true
           make_latest: "true"
@@ -109,3 +114,6 @@ jobs:
 
       - name: Publish to PyPi via Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1.13
+        with:
+          verbose: true
+          attestations: false
