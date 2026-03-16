@@ -1,6 +1,6 @@
-# VulnParse-Pin Documentation
+# VulnParse-Pin Documentation Index
 
-This index is the fastest way to navigate the full documentation set.
+Welcome to the VulnParse-Pin documentation index! This page serves as a comprehensive guide to all the documentation available for VulnParse-Pin, organized into sections for easy navigation. Whether you're new to VulnParse-Pin or looking to deepen your understanding, you'll find resources here to help you get started and explore the technical details.
 
 ## Start here
 
@@ -23,7 +23,7 @@ This index is the fastest way to navigate the full documentation set.
 
 ## Security and governance
 
-- [Security](Security.md)
+- [Security Features](Security%20Features.md)
 - [Threat Model](Threat%20Model.md)
 - [Known Limitations](Known%20Limitations.md)
 
@@ -33,3 +33,9 @@ This index is the fastest way to navigate the full documentation set.
 - [Performance Optimizations](Performance%20Optimizations.md)
 - [Benchmarks](Benchmarks.md)
 - [Presentation Overlays](Presentation%20Overlays.md)
+
+<!-- live reload probe -->
+
+<!-- delayed probe -->
+
+<!-- forced livereload probe -->

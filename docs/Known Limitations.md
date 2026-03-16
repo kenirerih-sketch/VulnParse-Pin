@@ -1,6 +1,6 @@
 # Known Limitations
 
-This document tracks current boundaries and non-goals for VulnParse-Pin v1.0.0rc.1.
+This document tracks current boundaries and non-goals for VulnParse-Pin v1.0.0.
 
 ## Parser coverage limits
 
