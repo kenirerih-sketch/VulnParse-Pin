@@ -26,14 +26,14 @@ SENTINEL_SCORE = -1.0
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0B\x0E-\x1F\x7F]")
 
-def _flatten_exploits(exploit_refs: dict[str, list[dict]]) -> tuple[str, str, str]:
+def _flatten_exploits(exploit_refs: Any) -> tuple[str, str, str]:
     """
     Flatten exploit refs into semicolon-separated strings.
 
     Returns:
         (ids, titles, urls) as strings
     """
-    if not exploit_refs or not isinstance(exploit_refs, dict):
+    if not exploit_refs:
         return ("", "", "")
 
 
@@ -41,18 +41,31 @@ def _flatten_exploits(exploit_refs: dict[str, list[dict]]) -> tuple[str, str, st
     titles: List[str] = []
     urls: List[str] = []
 
-    for cve, refs in exploit_refs.items():
-        if not refs:
-            continue
-        if not isinstance(refs, list):
-            continue
-
-        for ref in refs:
+    # New shape (v1.0.3+): list[dict] with optional ref['cve']
+    if isinstance(exploit_refs, list):
+        for ref in exploit_refs:
             if not isinstance(ref, dict):
                 continue
-            ids.append(f"{cve}:{ref.get('exploit_id', '')}")
-            titles.append(f"{cve}:{ref.get('title', '')}")
-            urls.append(f"{cve}:{ref.get('url', '')}")
+            cve = str(ref.get("cve") or "")
+            prefix = f"{cve}:" if cve else ""
+            ids.append(f"{prefix}{ref.get('exploit_id', '')}")
+            titles.append(f"{prefix}{ref.get('title', '')}")
+            urls.append(f"{prefix}{ref.get('url', '')}")
+        return ";".join(ids), ";".join(titles), ";".join(urls)
+
+    # Legacy shape: dict[cve -> list[dict]]
+    if isinstance(exploit_refs, dict):
+        for cve, refs in exploit_refs.items():
+            if not refs or not isinstance(refs, list):
+                continue
+
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    continue
+                ids.append(f"{cve}:{ref.get('exploit_id', '')}")
+                titles.append(f"{cve}:{ref.get('title', '')}")
+                urls.append(f"{cve}:{ref.get('url', '')}")
+        return ";".join(ids), ";".join(titles), ";".join(urls)
 
     return ";".join(ids), ";".join(titles), ";".join(urls)
 
@@ -252,13 +265,17 @@ def _build_csv_row(asset, finding, scored_findings, topn_asset_rank, topn_findin
     else:
         topn_inference_evidence = ""
 
+    _avg_risk = getattr(asset, "avg_risk_score", None)
+    _cvss = getattr(finding, "cvss_score", None)
+    _epss = getattr(finding, "epss_score", None)
+
     return {
         # ----- Asset Truth -----
         "asset_id": aid,
         "asset_hostname": getattr(asset, "hostname", "") or "",
         "asset_ip": getattr(asset, "ip_address", "") or "",
         "asset_criticality": getattr(asset, "criticality", "") or "",
-        "asset_avg_risk_score": getattr(asset, "avg_risk_score", "") or "",
+        "asset_avg_risk_score": _avg_risk if _avg_risk is not None else SENTINEL_SCORE,
 
         # ---- Finding Truth/Enrichment ----
         "finding_id": fid,
@@ -267,9 +284,9 @@ def _build_csv_row(asset, finding, scored_findings, topn_asset_rank, topn_findin
         "severity": getattr(finding, "severity", "") or "",
         "authoritative_cve": getattr(finding, "enrichment_source_cve", "") or "",
         "cves": ";".join(map(str, getattr(finding, "cves", []) or [])),
-        "cvss_score": getattr(finding, "cvss_score", None),
+        "cvss_score": _cvss if _cvss is not None else SENTINEL_SCORE,
         "cvss_vector": getattr(finding, "cvss_vector", "") or "",
-        "epss_score": getattr(finding, "epss_score", None),
+        "epss_score": _epss if _epss is not None else SENTINEL_SCORE,
         "cisa_kev": bool(getattr(finding, "cisa_kev", False)),
         "exploit_available": bool(getattr(finding, "exploit_available", False) or getattr(finding, "cisa_kev", False)),
         "exploit_ids": exploit_ids,
