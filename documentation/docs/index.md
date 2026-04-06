@@ -15,6 +15,8 @@ Welcome to the VulnParse-Pin documentation index! This page serves as a comprehe
 
 - [Why VulnParse-Pin Exists](Why%20VulnParse-Pin%20Exists.md)
 - [Mission Statement](Mission%20Statement.md)
+- [CVSS vs VulnParse Scoring Comparison](CVSS_vs_VulnParse_Scoring_Comparison.md)
+- [Value Proposition One Pager](Value_Proposition_One_Pager.md)
 - [Licensing](Licensing.md)
 
 ## Technical internals
@@ -34,6 +36,10 @@ Welcome to the VulnParse-Pin documentation index! This page serves as a comprehe
 - [Threat Model](Threat%20Model.md)
 - [Known Limitations](Known%20Limitations.md)
 - [ADR Workflow](ADR%20Workflow.md)
+<<<<<<< HEAD
+- [ADR Template](adr/ADR-Template.md)
+=======
+>>>>>>> main
 - [ADR-0001: Config Seam Architecture](adr/ADR-0001-config-seam.md)
 - [ADR-0002: Enrichment Seam Architecture](adr/ADR-0002-enrichment-seam.md)
 - [Architecture Review Checklist](Architecture%20Review%20Checklist.md)
