@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.2.1] - Hotfix Release for NVD Enrichment Skip Issue
 
+## [1.2.1] - Hotfix Release for NVD Enrichment Skip Issue
+
 ### Fixed
 
 - NVD enrichment no longer skips when using default config: bootstrap initialization now correctly reads NVD year policy from canonical path (`feed_cache.feeds.nvd`) with fallback to legacy path (`feed_cache.nvd`), matching the path hierarchy used by enrichment layers and preventing silent skips on demo/standard runs.
