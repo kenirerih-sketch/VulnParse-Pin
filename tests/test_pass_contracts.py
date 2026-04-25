@@ -13,6 +13,8 @@ from vulnparse_pin.core.classes.dataclass import (
     Services,
 )
 from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
+from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
+from vulnparse_pin.core.passes.Nmap.nmap_adapter_pass import NmapAdapterPass
 from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
 from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
 from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
@@ -101,7 +103,8 @@ def _run_full_pipeline(ctx, scan):
 
     scoring = ScoringPass(get_policy())
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     return runner.run_all(ctx, scan)
 
 
@@ -156,7 +159,8 @@ def test_topn_basis_matches_config(tmp_path):
 
     scoring = ScoringPass(get_policy())
     topn = TopNPass(cfg)
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(cfg.aci)
+    runner = PassRunner([scoring, aci, topn])
     scan = runner.run_all(ctx, scan)
 
     data = scan.derived.passes["TopN@1.0"].data
@@ -177,6 +181,24 @@ def test_topn_references_exist_in_truth(tmp_path):
             assert f.get("finding_id") in truth_ids
 
 
+def test_nmap_adapter_pass_can_run_before_scoring_and_topn(tmp_path):
+    ctx = make_ctx(tmp_path)
+    scan = make_sample_scan()
+
+    nmap = NmapAdapterPass(None)
+    scoring = ScoringPass(get_policy())
+    topn = TopNPass(_safe_fallback_config())
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([nmap, scoring, aci, topn])
+
+    out = runner.run_all(ctx, scan)
+
+    assert out.derived.get("nmap_adapter@1.0") is not None
+    assert out.derived.get("Scoring@2.0") is not None
+    assert out.derived.get("ACI@1.0") is not None
+    assert out.derived.get("TopN@1.0") is not None
+
+
 # ---------- determinism and dependency tests ----------
 
 
@@ -186,7 +208,8 @@ def test_pass_pipeline_is_deterministic(tmp_path):
 
     scoring = ScoringPass(get_policy())
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
 
     scan1 = copy.deepcopy(base_scan)
     scan2 = copy.deepcopy(base_scan)
@@ -216,7 +239,7 @@ def test_missing_pass_dependency_behavior(tmp_path):
     assert result.data.get("status") == "skipped"
     err = result.data.get("error", {})
     assert err.get("code") == "missing_dependency"
-    assert "Scoring@1.0" in err.get("missing", [])
+    assert "Scoring@2.0" in err.get("missing", [])
     assert result.data.get("assets") in ([], ())
     assert result.data.get("findings_by_asset") == {}
 
@@ -231,7 +254,7 @@ def test_downstream_uses_asset_level_asset_id(tmp_path):
 
     scan = _run_full_pipeline(ctx, scan)
 
-    scoring = scan.derived.passes["Scoring@1.0"].data
+    scoring = scan.derived.passes["Scoring@2.0"].data
     topn = scan.derived.passes["TopN@1.0"].data
 
     assert "ASSET-CANONICAL" in scoring.get("asset_scores", {})
@@ -359,7 +382,8 @@ def test_topn_prefers_updated_scan_criticality_over_stale_index(tmp_path):
 
     scoring = ScoringPass(get_policy())
     topn = TopNPass(_safe_fallback_config())
-    out = PassRunner([scoring, topn]).run_all(ctx, scan)
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    out = PassRunner([scoring, aci, topn]).run_all(ctx, scan)
 
     ranked_assets = out.derived.passes["TopN@1.0"].data["assets"]
     assert ranked_assets[0]["asset_id"] == "Z-EXTREME"
@@ -463,7 +487,8 @@ def test_topn_index_sorting_determinism(tmp_path):
     
     scoring = ScoringPass(get_policy())
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     
     scan1 = copy.deepcopy(base_scan)
     scan2 = copy.deepcopy(base_scan)
@@ -509,7 +534,7 @@ def test_pass_runner_rejects_missing_declared_dependency(tmp_path):
     class _DependentOnlyPass:
         name = "DependentOnly"
         version = "1.0"
-        requires_passes = ("Scoring@1.0",)
+        requires_passes = ("Scoring@2.0",)
 
         def run(self, _ctx, _scan):
             return DerivedPassResult(
@@ -528,7 +553,7 @@ def test_pass_runner_rejects_wrong_dependency_order(tmp_path):
 
     class _FakeScoring:
         name = "Scoring"
-        version = "1.0"
+        version = "2.0"
         requires_passes = ()
 
         def run(self, _ctx, _scan):
@@ -540,7 +565,7 @@ def test_pass_runner_rejects_wrong_dependency_order(tmp_path):
     class _NeedsScoring:
         name = "NeedsScoring"
         version = "1.0"
-        requires_passes = ("Scoring@1.0",)
+        requires_passes = ("Scoring@2.0",)
 
         def run(self, _ctx, _scan):
             return DerivedPassResult(

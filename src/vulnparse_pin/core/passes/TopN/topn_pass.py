@@ -34,6 +34,89 @@ if TYPE_CHECKING:
     from vulnparse_pin.core.passes.TopN.TN_triage_semantics import ConfidenceThreshold
 
 
+def _coerce_score_trace(rec: Dict[str, Any]) -> Dict[str, Any]:
+    trace = rec.get("score_trace", {}) if isinstance(rec, dict) else {}
+    return trace if isinstance(trace, dict) else {}
+
+
+def _score_trace_priority_signals(rec: Dict[str, Any]) -> Tuple[int, int, int]:
+    trace = _coerce_score_trace(rec)
+    contributors = trace.get("contributors")
+    if not isinstance(contributors, list):
+        contributors = []
+
+    cve_count = trace.get("cve_count")
+    try:
+        cve_count_int = int(cve_count)
+    except (TypeError, ValueError):
+        cve_count_int = len(contributors)
+    cve_count_int = max(0, cve_count_int)
+
+    exploitable_cve_count = 0
+    kev_cve_count = 0
+    for contributor in contributors:
+        if not isinstance(contributor, dict):
+            continue
+        if bool(contributor.get("exploit_available", False)):
+            exploitable_cve_count += 1
+        if bool(contributor.get("cisa_kev", False)):
+            kev_cve_count += 1
+
+    union_flags = trace.get("union_flags")
+    if not isinstance(union_flags, dict):
+        union_flags = {}
+
+    if exploitable_cve_count == 0 and bool(union_flags.get("exploit", False)):
+        exploitable_cve_count = 1
+    if kev_cve_count == 0 and bool(union_flags.get("kev", False)):
+        kev_cve_count = 1
+
+    return exploitable_cve_count, kev_cve_count, cve_count_int
+
+
+def _split_reason_text(reason_value: Any) -> Tuple[str, ...]:
+    reason_text = str(reason_value or "").strip()
+    if not reason_text:
+        return tuple()
+    return tuple(part.strip() for part in reason_text.split(";") if part.strip())
+
+
+def _normalize_text_blob(text: str) -> str:
+    return "".join(ch if ch.isalnum() else " " for ch in text.lower())
+
+
+def _count_finding_text_token_hits(tokens: Tuple[str, ...], normalized_blob: str, blob_terms: set[str]) -> int:
+    padded_blob = f" {normalized_blob} "
+    hits = 0
+    for tok in tokens:
+        token = str(tok or "").strip().lower()
+        if not token:
+            continue
+        if " " in token:
+            if f" {token} " in padded_blob:
+                hits += 1
+        elif token in blob_terms:
+            hits += 1
+    return hits
+
+
+def _count_conflict_token_hits(tokens: Tuple[str, ...], normalized_blob: str, blob_terms: set[str]) -> int:
+    if not tokens:
+        return 0
+    padded_blob = f" {normalized_blob} "
+    hits = 0
+    for tok in tokens:
+        token = str(tok or "").strip().lower()
+        if not token:
+            continue
+        if " " in token:
+            if f" {token} " in padded_blob:
+                hits += 1
+        elif token in blob_terms:
+            hits += 1
+    return hits
+
+
 # -------------------------------------------
 # TopN Pass
 # -------------------------------------------
@@ -41,7 +124,7 @@ if TYPE_CHECKING:
 class TopNPass(Pass):
     name = "TopN"
     version: str = "1.0"
-    requires_passes: tuple[str, ...] = ("Scoring@1.0",)
+    requires_passes: tuple[str, ...] = ("Scoring@2.0", "ACI@1.0")
 
     def __init__(
         self, 
@@ -71,9 +154,9 @@ class TopNPass(Pass):
                     event_type="decision",
                     subject_ref="topn:summary",
                     reason_code=DecisionReasonCodes.TOPN_SKIPPED_MISSING_SCORING,
-                    reason_text="TopN skipped because Scoring@1.0 output was missing.",
-                    factor_refs=["dependency:Scoring@1.0"],
-                    evidence={"status": "skipped", "missing_dependency": "Scoring@1.0"},
+                    reason_text="TopN skipped because Scoring@2.0 output was missing.",
+                    factor_refs=["dependency:Scoring@2.0"],
+                    evidence={"status": "skipped", "missing_dependency": "Scoring@2.0"},
                 )
 
             output = TopNPassOutput(
@@ -88,8 +171,8 @@ class TopNPass(Pass):
             data["status"] = "skipped"
             data["error"] = {
                 "code": "missing_dependency",
-                "message": "Scoring@1.0 output not found; TopN ranking not executed.",
-                "missing": ["Scoring@1.0"],
+                "message": "Scoring@2.0 output not found; TopN ranking not executed.",
+                "missing": ["Scoring@2.0"],
             }
 
             meta = PassMeta(
@@ -100,7 +183,51 @@ class TopNPass(Pass):
             )
             return DerivedPassResult(meta=meta, data=data)
 
+        aci = self._get_aci_output(scan)
+        if aci is None:
+            ctx.logger.error("Missing ACI output; cannot rank.", extra={"vp_label": "TopNPass"})
+            services = getattr(ctx, "services", None)
+            ledger = getattr(services, "ledger", None)
+            if ledger is not None:
+                ledger.append_event(
+                    component="TopN",
+                    event_type="decision",
+                    subject_ref="topn:summary",
+                    reason_code=DecisionReasonCodes.TOPN_SKIPPED_MISSING_ACI,
+                    reason_text="TopN skipped because ACI@1.0 output was missing.",
+                    factor_refs=["dependency:ACI@1.0"],
+                    evidence={"status": "skipped", "missing_dependency": "ACI@1.0"},
+                )
+
+            output = TopNPassOutput(
+                rank_basis=self.cfg.topn.rank_basis,
+                k=self.cfg.topn.k,
+                decay=self.cfg.topn.decay,
+                assets=(),
+                findings_by_asset={},
+                global_top_findings=(),
+            )
+            data = asdict(output)
+            data["status"] = "skipped"
+            data["error"] = {
+                "code": "missing_dependency",
+                "message": "ACI@1.0 output not found; TopN ranking not executed.",
+                "missing": ["ACI@1.0"],
+            }
+
+            meta = PassMeta(
+                name=self.name,
+                version=self.version,
+                created_at_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                notes="TopN soft no-op due to missing ACI pass output.",
+            )
+            return DerivedPassResult(meta=meta, data=data)
+
         # 1 Build lookup index
+        nmap_ctx_cfg = getattr(getattr(ctx, "services", None), "nmap_ctx_config", None) or {}
+        nmap_open_ports_by_asset: Dict[str, set] = {}
+        if nmap_ctx_cfg.get("port_tiebreak_enabled", True):
+            nmap_open_ports_by_asset = self._get_nmap_open_ports_by_asset(scan)
         asset_to_findings = self._index_findings_by_asset(scan)     # { asset_id: [fid, fid, fid] }
         # Count total findings
         total_findings = sum(len(fids) for fids in asset_to_findings.values())
@@ -117,8 +244,10 @@ class TopNPass(Pass):
                 ctx=ctx,
                 scan=scan,
                 scoring=scoring,
+                aci=aci,
                 asset_to_findings=asset_to_findings,
                 rank_basis=rank_basis,
+                nmap_open_ports_by_asset=nmap_open_ports_by_asset,
             )
         else:
             # 2 Compute inference per asset
@@ -135,11 +264,13 @@ class TopNPass(Pass):
                 ranked = self._rank_findings_for_asset(
                     scan=scan,
                     scoring=scoring,
+                    aci=aci,
                     asset_id=asset_id,
                     finding_ids=fids,
                     rank_basis=rank_basis,
                     ctx=ctx,
                     max_findings=self.cfg.topn.max_findings_per_asset,
+                    nmap_confirmed_ports=nmap_open_ports_by_asset.get(asset_id, set()),
                 )
                 findings_by_asset_ranked[asset_id] = ranked
 
@@ -147,10 +278,12 @@ class TopNPass(Pass):
             ranked_assets = self._rank_assets(
                 scan=scan,
                 scoring=scoring,
+                aci=aci,
                 asset_to_findings=asset_to_findings,
                 inference_by_asset=inference_by_asset,
                 rank_basis=rank_basis,
                 ctx=ctx,
+                nmap_open_ports_by_asset=nmap_open_ports_by_asset,
             )
 
             # trim to max_assets
@@ -162,10 +295,12 @@ class TopNPass(Pass):
                 global_top = self._rank_global_findings(
                     scan=scan,
                     scoring=scoring,
+                    aci=aci,
                     asset_to_findings=asset_to_findings,
                     rank_basis=rank_basis,
                     ctx=ctx,
-                    max_findings=self.cfg.topn.global_top_findings
+                    max_findings=self.cfg.topn.global_top_findings,
+                    nmap_open_ports_by_asset=nmap_open_ports_by_asset,
                 )
 
         output = TopNPassOutput(
@@ -246,14 +381,18 @@ class TopNPass(Pass):
         ctx: "RunContext",
         scan: "ScanResult",
         scoring: "DerivedPassResult",
+        aci: "DerivedPassResult",
         asset_to_findings: Dict[str, List[str]],
         rank_basis: str,
+        nmap_open_ports_by_asset: Optional[Dict[str, set]] = None,
     ) -> Tuple[
         Dict[str, ExposureInference],
         Dict[str, Tuple[RankedFindingRef, ...]],
         List[RankedAssetRef],
         Tuple[RankedFindingRef, ...],
     ]:
+        nmap_open_ports_by_asset = nmap_open_ports_by_asset or {}
+
         cpu_total = os.cpu_count() or 1
         worker_cap = self.process_workers if self.process_workers is not None else cpu_total
         num_workers = max(1, min(worker_cap, cpu_total))
@@ -272,7 +411,23 @@ class TopNPass(Pass):
                     "operational_score": rec.get("operational_score", 0.0),
                     "risk_band": rec.get("risk_band", "unknown"),
                     "reason": rec.get("reason", ""),
+                    "score_trace": rec.get("score_trace", {}),
                 }
+
+        aci_finding_data: Dict[str, Dict[str, Any]] = {}
+        aci_asset_data: Dict[str, Dict[str, Any]] = {}
+        aci_data = getattr(aci, "data", None)
+        if isinstance(aci_data, dict):
+            raw_findings = aci_data.get("finding_semantics", {})
+            raw_assets = aci_data.get("asset_semantics", {})
+            if isinstance(raw_findings, dict):
+                for fid, rec in raw_findings.items():
+                    if isinstance(rec, dict):
+                        aci_finding_data[fid] = rec
+            if isinstance(raw_assets, dict):
+                for aid, rec in raw_assets.items():
+                    if isinstance(rec, dict):
+                        aci_asset_data[aid] = rec
 
         finding_attrs: Dict[str, Dict[str, Any]] = {}
         asset_obs_by_id: Dict[str, Dict[str, Any]] = {}
@@ -303,6 +458,10 @@ class TopNPass(Pass):
                     "hostname": obs.hostname,
                     "criticality": criticality,
                     "open_ports": tuple(obs.open_ports),
+                    "finding_text_blob": obs.finding_text_blob,
+                    "finding_title_blob": obs.finding_title_blob,
+                    "finding_description_blob": obs.finding_description_blob,
+                    "finding_plugin_output_blob": obs.finding_plugin_output_blob,
                 }
         else:
             for asset in scan.assets:
@@ -311,19 +470,35 @@ class TopNPass(Pass):
                 hostname = getattr(asset, "hostname", None)
                 crit = getattr(asset, "criticality", None)
                 open_ports: set[int] = set()
+                title_parts: List[str] = []
+                description_parts: List[str] = []
+                plugin_output_parts: List[str] = []
                 for finding in asset.findings:
                     if aid is None:
                         aid = getattr(finding, "asset_id", None)
                     port = getattr(finding, "affected_port", None)
                     if isinstance(port, int):
                         open_ports.add(port)
+                    if getattr(finding, "title", None):
+                        title_parts.append(str(getattr(finding, "title")))
+                    if getattr(finding, "description", None):
+                        description_parts.append(str(getattr(finding, "description")))
+                    if getattr(finding, "plugin_output", None):
+                        plugin_output_parts.append(str(getattr(finding, "plugin_output")))
                 if aid is not None:
+                    title_blob = " ".join(title_parts).lower()
+                    description_blob = " ".join(description_parts).lower()
+                    plugin_output_blob = " ".join(plugin_output_parts).lower()
                     asset_obs_by_id[aid] = {
                         "asset_id": aid,
                         "ip": ip_addr,
                         "hostname": hostname,
                         "criticality": crit,
                         "open_ports": tuple(sorted(open_ports)),
+                        "finding_text_blob": " ".join((title_blob, description_blob, plugin_output_blob)).strip(),
+                        "finding_title_blob": title_blob,
+                        "finding_description_blob": description_blob,
+                        "finding_plugin_output_blob": plugin_output_blob,
                     }
 
         inference_cfg = {
@@ -332,6 +507,14 @@ class TopNPass(Pass):
                 "high": int(self.cfg.inference.confidence_thresholds.high),
             },
             "public_service_ports": tuple(int(p) for p in self.cfg.inference.public_service_ports_set),
+            "finding_text_min_token_matches": int(self.cfg.inference.finding_text_min_token_matches),
+            "finding_text_title_weight": int(self.cfg.inference.finding_text_title_weight),
+            "finding_text_description_weight": int(self.cfg.inference.finding_text_description_weight),
+            "finding_text_plugin_output_weight": int(self.cfg.inference.finding_text_plugin_output_weight),
+            "finding_text_max_weighted_hits": int(self.cfg.inference.finding_text_max_weighted_hits),
+            "finding_text_conflict_tokens": tuple(self.cfg.inference.finding_text_conflict_tokens),
+            "finding_text_conflict_penalty": int(self.cfg.inference.finding_text_conflict_penalty),
+            "finding_text_diminishing_factors": tuple(float(x) for x in self.cfg.inference.finding_text_diminishing_factors),
             "rules": [
                 {
                     "rule_id": r.rule_id,
@@ -353,8 +536,8 @@ class TopNPass(Pass):
 
         inference_by_asset: Dict[str, ExposureInference] = {}
         findings_by_asset_ranked: Dict[str, Tuple[RankedFindingRef, ...]] = {}
-        asset_rows: List[Tuple[float, int, int, int, str, Tuple[float, ...]]] = []
-        global_candidates: List[Tuple[float, str, str, Dict[str, Any]]] = []
+        asset_rows: List[Tuple[float, float, int, int, int, int, int, int, str, Tuple[float, ...]]] = []
+        global_candidates: List[Tuple[float, float, str, str, int, int, int, int, Dict[str, Any]]] = []
 
         try:
             with cf.ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -364,6 +547,12 @@ class TopNPass(Pass):
                         chunk,
                         scoring_data,
                         finding_attrs,
+                        aci_finding_data,
+                        aci_asset_data,
+                        bool(self.cfg.aci.enabled),
+                        float(self.cfg.aci.min_confidence),
+                        float(self.cfg.aci.max_uplift),
+                        float(self.cfg.aci.asset_uplift_weight),
                         asset_obs_by_id,
                         inference_cfg,
                         rank_basis,
@@ -386,6 +575,7 @@ class TopNPass(Pass):
                             externally_facing_inferred=bool(inf["externally_facing_inferred"]),
                             public_service_ports_inferred=bool(inf["public_service_ports_inferred"]),
                             evidence=tuple(inf["evidence"]),
+                            evidence_rule_ids=tuple(inf.get("evidence_rule_ids", ())),
                         )
 
                     for aid, ranked_dicts in payload["findings"].items():
@@ -428,20 +618,24 @@ class TopNPass(Pass):
                 findings_by_asset_ranked[asset_id] = self._rank_findings_for_asset(
                     scan=scan,
                     scoring=scoring,
+                    aci=aci,
                     asset_id=asset_id,
                     finding_ids=fids,
                     rank_basis=rank_basis,
                     ctx=ctx,
                     max_findings=self.cfg.topn.max_findings_per_asset,
+                    nmap_confirmed_ports=nmap_open_ports_by_asset.get(asset_id, set()),
                 )
 
             ranked_assets = self._rank_assets(
                 scan=scan,
                 scoring=scoring,
+                aci=aci,
                 asset_to_findings=asset_to_findings,
                 inference_by_asset=inference_by_asset,
                 rank_basis=rank_basis,
                 ctx=ctx,
+                nmap_open_ports_by_asset=nmap_open_ports_by_asset,
             )
             ranked_assets = ranked_assets[: self.cfg.topn.max_assets]
 
@@ -450,16 +644,29 @@ class TopNPass(Pass):
                 global_top = self._rank_global_findings(
                     scan=scan,
                     scoring=scoring,
+                    aci=aci,
                     asset_to_findings=asset_to_findings,
                     rank_basis=rank_basis,
                     ctx=ctx,
                     max_findings=self.cfg.topn.global_top_findings,
+                    nmap_open_ports_by_asset=nmap_open_ports_by_asset,
                 )
             return inference_by_asset, findings_by_asset_ranked, ranked_assets, global_top
 
-        asset_rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], x[4]))
+        asset_rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], -x[4], -x[5], -x[6], -x[7], x[8]))
         ranked_assets: List[RankedAssetRef] = []
-        for i, (asset_score, _crit_high, _crit_rank, scorable_count, asset_id, top_scores) in enumerate(
+        for i, (
+            asset_score,
+            _aci_asset_uplift,
+            _crit_high,
+            _exploitable_findings,
+            _kev_findings,
+            _cve_breadth,
+            _crit_rank,
+            scorable_count,
+            asset_id,
+            top_scores,
+        ) in enumerate(
             asset_rows[: self.cfg.topn.max_assets],
             start=1,
         ):
@@ -477,10 +684,10 @@ class TopNPass(Pass):
 
         global_top: Tuple[RankedFindingRef, ...] = ()
         if self.cfg.topn.include_global_top_findings:
-            global_candidates.sort(key=lambda x: (-x[0], x[1], x[2]))
+            global_candidates.sort(key=lambda x: (-x[0], -x[1], -x[4], -x[5], -x[6], -x[7], x[2], x[3]))
             selected = global_candidates[: self.cfg.topn.global_top_findings]
             refs: List[RankedFindingRef] = []
-            for i, (_, _, _, d) in enumerate(selected, start=1):
+            for i, (_, _, _, _, _, _, _, _, d) in enumerate(selected, start=1):
                 refs.append(
                     RankedFindingRef(
                         finding_id=d["finding_id"],
@@ -503,11 +710,85 @@ class TopNPass(Pass):
     # Core Plugs
     # -------------------------------------------
 
+    def _get_nmap_open_ports_by_asset(self, scan: "ScanResult") -> Dict[str, set]:
+        """Load Nmap adapter open-port data keyed by asset_id. Returns {} if unavailable."""
+        try:
+            result = scan.derived.passes.get("nmap_adapter@1.0")
+            if result is None:
+                return {}
+            data = getattr(result, "data", None)
+            if not isinstance(data, dict) or data.get("status") != "enabled":
+                return {}
+            raw = data.get("asset_open_ports", {})
+            if not isinstance(raw, dict):
+                return {}
+            return {aid: set(ports) for aid, ports in raw.items()}
+        except (AttributeError, TypeError, KeyError):
+            return {}
+
     def _get_scoring_output(self, scan: "ScanResult") -> DerivedPassResult | None:
         try:
-            return scan.derived.passes["Scoring@1.0"]
+            return scan.derived.passes["Scoring@2.0"]
         except (AttributeError, TypeError, KeyError):
             return None
+
+    def _get_aci_output(self, scan: "ScanResult") -> DerivedPassResult | None:
+        try:
+            return scan.derived.passes["ACI@1.0"]
+        except (AttributeError, TypeError, KeyError):
+            return None
+
+    def _get_finding_aci_record(self, aci: "DerivedPassResult", finding_id: str) -> Optional[Dict[str, Any]]:
+        data = getattr(aci, "data", None)
+        if not isinstance(data, dict):
+            return None
+        findings = data.get("finding_semantics", {})
+        if not isinstance(findings, dict):
+            return None
+        rec = findings.get(finding_id)
+        return rec if isinstance(rec, dict) else None
+
+    def _get_asset_aci_record(self, aci: "DerivedPassResult", asset_id: str) -> Optional[Dict[str, Any]]:
+        data = getattr(aci, "data", None)
+        if not isinstance(data, dict):
+            return None
+        assets = data.get("asset_semantics", {})
+        if not isinstance(assets, dict):
+            return None
+        rec = assets.get(asset_id)
+        return rec if isinstance(rec, dict) else None
+
+    def _compute_finding_aci_uplift(self, aci_rec: Optional[Dict[str, Any]]) -> float:
+        if not self.cfg.aci.enabled or not isinstance(aci_rec, dict):
+            return 0.0
+        try:
+            confidence = float(aci_rec.get("confidence", 0.0))
+            uplift = float(aci_rec.get("rank_uplift", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        if confidence < float(self.cfg.aci.min_confidence):
+            return 0.0
+        return max(0.0, min(float(self.cfg.aci.max_uplift), uplift))
+
+    def _compute_asset_aci_uplift(self, aci_rec: Optional[Dict[str, Any]]) -> float:
+        if not self.cfg.aci.enabled or not isinstance(aci_rec, dict):
+            return 0.0
+        try:
+            uplift = float(aci_rec.get("rank_uplift", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        weighted = uplift * float(self.cfg.aci.asset_uplift_weight)
+        return max(0.0, min(float(self.cfg.aci.max_uplift), weighted))
+
+    def _build_aci_reason_text(self, aci_rec: Optional[Dict[str, Any]], uplift: float) -> Optional[str]:
+        if uplift <= 0.0 or not isinstance(aci_rec, dict):
+            return None
+        capabilities = aci_rec.get("capabilities", [])
+        if not isinstance(capabilities, (list, tuple)):
+            capabilities = []
+        conf = aci_rec.get("confidence", 0.0)
+        caps_preview = ",".join(str(c) for c in capabilities[:3]) if capabilities else "unspecified"
+        return f"ACI Uplift (+{uplift:.2f}) conf={float(conf):.2f} caps={caps_preview}"
 
     def _index_findings_by_asset(self, scan: "ScanResult") -> dict[str, List[str]]:
         maps: Dict[str, List[str]] = {}
@@ -573,6 +854,10 @@ class TopNPass(Pass):
                     hostname=obs.hostname,
                     criticality=current_criticality if current_criticality is not None else obs.criticality,
                     open_ports=obs.open_ports,
+                    finding_text_blob=obs.finding_text_blob,
+                    finding_title_blob=obs.finding_title_blob,
+                    finding_description_blob=obs.finding_description_blob,
+                    finding_plugin_output_blob=obs.finding_plugin_output_blob,
                 )
 
         ip = getattr(asset, "ip_address", None) if asset else None
@@ -580,6 +865,10 @@ class TopNPass(Pass):
 
         # Gather open ports
         ports: List[int] = []
+        finding_text_parts: List[str] = []
+        title_parts: List[str] = []
+        description_parts: List[str] = []
+        plugin_output_parts: List[str] = []
         for fid in finding_ids:
             f = self._get_finding_by_id(scan, fid, ctx)
             if not f:
@@ -587,10 +876,33 @@ class TopNPass(Pass):
             p = getattr(f, "affected_port", None)
             if isinstance(p, int):
                 ports.append(p)
+            for text_value in (
+                getattr(f, "title", None),
+                getattr(f, "description", None),
+                getattr(f, "plugin_output", None),
+            ):
+                if text_value:
+                    finding_text_parts.append(str(text_value))
+            if getattr(f, "title", None):
+                title_parts.append(str(getattr(f, "title")))
+            if getattr(f, "description", None):
+                description_parts.append(str(getattr(f, "description")))
+            if getattr(f, "plugin_output", None):
+                plugin_output_parts.append(str(getattr(f, "plugin_output")))
 
         ports = sorted(set(ports))
         crit = current_criticality
-        return AssetObservation(asset_id=asset_id, ip=ip, hostname=hostname, criticality=crit, open_ports=tuple(ports))
+        return AssetObservation(
+            asset_id=asset_id,
+            ip=ip,
+            hostname=hostname,
+            criticality=crit,
+            open_ports=tuple(ports),
+            finding_text_blob=" ".join(finding_text_parts).lower(),
+            finding_title_blob=" ".join(title_parts).lower(),
+            finding_description_blob=" ".join(description_parts).lower(),
+            finding_plugin_output_blob=" ".join(plugin_output_parts).lower(),
+        )
 
     def _get_finding_by_id(self, scan: "ScanResult", finding_id: str, ctx: Optional["RunContext"] = None) -> Optional[Any]:
         """
@@ -628,14 +940,16 @@ class TopNPass(Pass):
         *,
         scan: "ScanResult",
         scoring: "DerivedPassResult",
+        aci: "DerivedPassResult",
         asset_id: str,
         finding_ids: List[str],
         rank_basis: str,
         ctx: Optional["RunContext"] = None,
-        max_findings: int,
+        max_findings: int = 0,
+        nmap_confirmed_ports: set = frozenset(),
     ) -> tuple[RankedFindingRef, ...]:
 
-        rows: List[Tuple[float, str, RankedFindingRef]] = []
+        rows: List[Tuple[float, float, int, int, int, int, str, RankedFindingRef]] = []
 
 
         for fid in finding_ids:
@@ -648,7 +962,13 @@ class TopNPass(Pass):
             score = raw if rank_basis == "raw" else op
 
             band = str(rec.get("risk_band", "unknown"))
-            reasons = tuple(rec.get("reason", ()).strip().split(";"))
+            reasons = _split_reason_text(rec.get("reason", ""))
+            exploit_count, kev_count, cve_count = _score_trace_priority_signals(rec)
+            aci_rec = self._get_finding_aci_record(aci, fid)
+            aci_uplift = self._compute_finding_aci_uplift(aci_rec)
+            aci_reason = self._build_aci_reason_text(aci_rec, aci_uplift)
+            if aci_reason:
+                reasons = tuple(list(reasons) + [aci_reason])
 
             f = self._get_finding_by_id(scan, fid, ctx)
             port = getattr(f, "affected_port", None) if f else None
@@ -667,13 +987,14 @@ class TopNPass(Pass):
                 proto=str(proto) if proto is not None else None,
                 plugin_id=str(plugin_id) if plugin_id is not None else None
             )
-            # Sort ley: score descending, then fid
-            rows.append((score, fid, ref))
+            # Sort key: score, combined-CVE exploit/KEV breadth, nmap confirmation, then stable ID.
+            nmap_hit = 1 if isinstance(port, int) and port in nmap_confirmed_ports else 0
+            rows.append((score, aci_uplift, exploit_count, kev_count, cve_count, nmap_hit, fid, ref))
 
-        rows.sort(key=lambda x: (-x[0], x[1]))
+        rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], -x[4], -x[5], x[6]))
 
         output: List[RankedFindingRef] = []
-        for i, (_, _, ref) in enumerate(rows[:max_findings], start=1):
+        for i, (_, _, _, _, _, _, _, ref) in enumerate(rows[:max_findings], start=1):
             output.append(_replace_rank(ref, i))
         return tuple(output)
 
@@ -683,6 +1004,7 @@ class TopNPass(Pass):
         ctx: "RunContext",
         scan: "ScanResult",
         scoring: "DerivedPassResult",
+        aci: "DerivedPassResult",
         asset_to_findings: Dict[str, List[str]],
         rank_basis: str,
     ) -> Dict[str, Tuple[RankedFindingRef, ...]]:
@@ -709,6 +1031,7 @@ class TopNPass(Pass):
                     "operational_score": rec.get("operational_score", 0.0),
                     "risk_band": rec.get("risk_band", "unknown"),
                     "reason": rec.get("reason", ""),
+                    "score_trace": rec.get("score_trace", {}),
                 }
         
         # Prepare finding attributes (port, proto, plugin_id)
@@ -783,6 +1106,7 @@ class TopNPass(Pass):
                 ranked = self._rank_findings_for_asset(
                     scan=scan,
                     scoring=scoring,
+                    aci=aci,
                     asset_id=asset_id,
                     finding_ids=fids,
                     rank_basis=rank_basis,
@@ -797,21 +1121,27 @@ class TopNPass(Pass):
         *,
         scan: "ScanResult",
         scoring: "DerivedPassResult",
+        aci: "DerivedPassResult",
         asset_to_findings: Dict[str, List[str]],
         inference_by_asset: Dict[str, ExposureInference],
         rank_basis: str,
         ctx: Optional["RunContext"] = None,
+        nmap_open_ports_by_asset: Optional[Dict[str, set]] = None,
     ) -> List[RankedAssetRef]:
+        nmap_open_ports_by_asset = nmap_open_ports_by_asset or {}
         decay = self.cfg.topn.decay
         k = self.cfg.topn.k
 
-        rows: List[Tuple[float, int, int, int, str, RankedAssetRef]] = []
+        rows: List[Tuple[float, float, int, int, int, int, int, int, int, str, RankedAssetRef]] = []
 
 
         for asset_id, fids, in asset_to_findings.items():
             scores: List[float] = []
             crit_high = 0
             scorable_count = 0
+            exploitable_findings = 0
+            kev_findings = 0
+            cve_breadth = 0
 
             for fid in fids:
                 rec = self._get_finding_score_record(scoring, fid)
@@ -828,9 +1158,18 @@ class TopNPass(Pass):
                 if band in ("critical", "high"):
                     crit_high += 1
 
+                exploit_count, kev_count, cve_count = _score_trace_priority_signals(rec)
+                if exploit_count > 0:
+                    exploitable_findings += 1
+                if kev_count > 0:
+                    kev_findings += 1
+                cve_breadth += cve_count
+
             obs = self._collect_asset_observation(scan, asset_id, finding_ids=fids, ctx=ctx)
             crit_label = (obs.criticality or "").strip().lower() if obs else ""
             crit_rank = {"extreme": 4, "high": 3, "medium": 2, "low": 1}.get(crit_label, 0)
+            aci_asset_rec = self._get_asset_aci_record(aci, asset_id)
+            aci_asset_uplift = self._compute_asset_aci_uplift(aci_asset_rec)
 
             scores.sort(reverse=True)
             top_scores = tuple(scores[:k])
@@ -849,13 +1188,29 @@ class TopNPass(Pass):
                 inference=inference_by_asset.get(asset_id)
             )
 
-            # tie-break: asset_score desc, band count desc, scorable count desc, asset id asc
-            rows.append((asset_score, crit_high, crit_rank, scorable_count, asset_id, ref))
+            # tie-break: score desc, high/critical count, combined-CVE exploit/KEV breadth,
+            # criticality rank, scored count, nmap confirmation, then asset ID asc.
+            nmap_confirmed = 1 if nmap_open_ports_by_asset.get(asset_id) else 0
+            rows.append(
+                (
+                    asset_score,
+                    aci_asset_uplift,
+                    crit_high,
+                    exploitable_findings,
+                    kev_findings,
+                    cve_breadth,
+                    crit_rank,
+                    scorable_count,
+                    nmap_confirmed,
+                    asset_id,
+                    ref,
+                )
+            )
 
-        rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], x[4]))
+        rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], -x[4], -x[5], -x[6], -x[7], -x[8], x[9]))
 
         output: List[RankedAssetRef] = []
-        for i, (_, _, _, _, _, ref) in enumerate(rows, start=1):
+        for i, (_, _, _, _, _, _, _, _, _, _, ref) in enumerate(rows, start=1):
             output.append(_replace_rank(ref, i))
         return output
 
@@ -865,13 +1220,16 @@ class TopNPass(Pass):
         *,
         scan: "ScanResult",
         scoring: "DerivedPassResult",
+        aci: "DerivedPassResult",
         asset_to_findings: Dict[str, List[str]],
         rank_basis: str,
         ctx: Optional["RunContext"] = None,
-        max_findings: int,
+        max_findings: int = 0,
+        nmap_open_ports_by_asset: Optional[Dict[str, set]] = None,
     ) -> Tuple[RankedFindingRef, ...]:
+        nmap_open_ports_by_asset = nmap_open_ports_by_asset or {}
 
-        rows: List[Tuple[float, str, str, RankedFindingRef]] = []
+        rows: List[Tuple[float, float, int, int, int, int, str, str, RankedFindingRef]] = []
 
 
         for asset_id, fids in asset_to_findings.items():
@@ -884,7 +1242,13 @@ class TopNPass(Pass):
                 op = float(rec.get("operational_score", raw))
                 score = raw if rank_basis == "raw" else op
                 band = str(rec.get("risk_band", "unknown"))
-                reasons = tuple(rec.get("reason", ()).strip().split(";"))
+                reasons = _split_reason_text(rec.get("reason", ""))
+                exploit_count, kev_count, cve_count = _score_trace_priority_signals(rec)
+                aci_rec = self._get_finding_aci_record(aci, fid)
+                aci_uplift = self._compute_finding_aci_uplift(aci_rec)
+                aci_reason = self._build_aci_reason_text(aci_rec, aci_uplift)
+                if aci_reason:
+                    reasons = tuple(list(reasons) + [aci_reason])
 
                 f = self._get_finding_by_id(scan, fid, ctx)
                 port = getattr(f, "affected_port", None) if f else None
@@ -904,12 +1268,14 @@ class TopNPass(Pass):
                     plugin_id=str(plugin_id) if plugin_id is not None else None,
                 )
 
-                rows.append((score, asset_id, fid, ref))
+                nmap_ports = nmap_open_ports_by_asset.get(asset_id, set())
+                nmap_hit = 1 if isinstance(port, int) and port in nmap_ports else 0
+                rows.append((score, aci_uplift, exploit_count, kev_count, cve_count, nmap_hit, asset_id, fid, ref))
 
-        rows.sort(key=lambda x: (-x[0], x[1], x[2]))
+            rows.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[3], -x[4], -x[5], x[6], x[7]))
 
         output: List[RankedFindingRef] = []
-        for i, (_, _, _, ref) in enumerate(rows[:max_findings], start=1):
+        for i, (_, _, _, _, _, _, _, _, ref) in enumerate(rows[:max_findings], start=1):
             output.append(_replace_rank(ref, i))
         return tuple(output)
 
@@ -920,19 +1286,63 @@ class TopNPass(Pass):
     def _infer_exposure(self, obs: AssetObservation) -> ExposureInference:
         score = 0
         evidence: List[str] = []
+        evidence_rule_ids: List[str] = []
         hit_tags = set()
 
         ip = (obs.ip or "").strip()
         hostname = (obs.hostname or "").strip().lower()
         criticality = (obs.criticality or "").strip().lower()
         ports_set = set(obs.open_ports)
+        finding_text_blob = str(obs.finding_text_blob or "").strip().lower()
+        finding_title_blob = str(obs.finding_title_blob or "").strip().lower()
+        finding_description_blob = str(obs.finding_description_blob or "").strip().lower()
+        finding_plugin_output_blob = str(obs.finding_plugin_output_blob or "").strip().lower()
+        normalized_text_blob = _normalize_text_blob(finding_text_blob)
+        normalized_title_blob = _normalize_text_blob(finding_title_blob)
+        normalized_description_blob = _normalize_text_blob(finding_description_blob)
+        normalized_plugin_output_blob = _normalize_text_blob(finding_plugin_output_blob)
+        text_terms = set(normalized_text_blob.split())
+        title_terms = set(normalized_title_blob.split())
+        description_terms = set(normalized_description_blob.split())
+        plugin_output_terms = set(normalized_plugin_output_blob.split())
 
         for rule in self.cfg.inference.rules:
             if not rule.enabled:
                 continue
-            if self._predicate_matches(rule.predicate, ip, hostname, criticality, ports_set):
+            if rule.predicate.name == "finding_text_contains_any":
+                matched, weighted_delta, trace = self._evaluate_finding_text_rule(
+                    pred=rule.predicate,
+                    normalized_text_blob=normalized_text_blob,
+                    text_terms=text_terms,
+                    normalized_title_blob=normalized_title_blob,
+                    title_terms=title_terms,
+                    normalized_description_blob=normalized_description_blob,
+                    description_terms=description_terms,
+                    normalized_plugin_output_blob=normalized_plugin_output_blob,
+                    plugin_output_terms=plugin_output_terms,
+                    base_weight=rule.weight,
+                )
+                if not matched:
+                    continue
+                score += weighted_delta
+                hit_tags.add(rule.tag)
+                evidence_rule_ids.append(rule.rule_id)
+                ev_base = rule.evidence.strip() if rule.evidence else f"{rule.rule_id} ({weighted_delta:+d})"
+                evidence.append(f"{ev_base} [{trace}]")
+                continue
+            if self._predicate_matches(
+                rule.predicate,
+                ip,
+                hostname,
+                criticality,
+                ports_set,
+                finding_text_blob,
+                normalized_text_blob,
+                text_terms,
+            ):
                 score += rule.weight
                 hit_tags.add(rule.tag)
+                evidence_rule_ids.append(rule.rule_id)
                 ev = rule.evidence.strip() if rule.evidence else f"{rule.rule_id} ({rule.weight:+d})"
                 evidence.append(ev)
 
@@ -943,16 +1353,89 @@ class TopNPass(Pass):
 
         #evidence order
         evidence_sorted = tuple(sorted(evidence))
+        evidence_rule_ids_sorted = tuple(sorted(set(evidence_rule_ids)))
 
         return ExposureInference(
             exposure_score=int(score),
             confidence=confidence,
             externally_facing_inferred=externally,
             public_service_ports_inferred=public_ports,
-            evidence=evidence_sorted
+            evidence=evidence_sorted,
+            evidence_rule_ids=evidence_rule_ids_sorted,
         )
 
-    def _predicate_matches(self, pred: ParsedPredicate, ip: str, hostname: str, criticality: str, ports_set: set[int]) -> bool:
+    def _evaluate_finding_text_rule(
+        self,
+        *,
+        pred: ParsedPredicate,
+        normalized_text_blob: str,
+        text_terms: set[str],
+        normalized_title_blob: str,
+        title_terms: set[str],
+        normalized_description_blob: str,
+        description_terms: set[str],
+        normalized_plugin_output_blob: str,
+        plugin_output_terms: set[str],
+        base_weight: int,
+    ) -> Tuple[bool, int, str]:
+        title_hits = _count_finding_text_token_hits(pred.tokens, normalized_title_blob, title_terms)
+        description_hits = _count_finding_text_token_hits(pred.tokens, normalized_description_blob, description_terms)
+        plugin_output_hits = _count_finding_text_token_hits(pred.tokens, normalized_plugin_output_blob, plugin_output_terms)
+        total_hits = _count_finding_text_token_hits(pred.tokens, normalized_text_blob, text_terms)
+
+        min_hits = int(self.cfg.inference.finding_text_min_token_matches)
+        if total_hits < min_hits:
+            return False, 0, f"token_hits={total_hits}, min_required={min_hits}"
+
+        weighted_hits = (
+            title_hits * int(self.cfg.inference.finding_text_title_weight)
+            + description_hits * int(self.cfg.inference.finding_text_description_weight)
+            + plugin_output_hits * int(self.cfg.inference.finding_text_plugin_output_weight)
+        )
+        weighted_hits = max(0, weighted_hits)
+
+        max_weighted_hits = max(1, int(self.cfg.inference.finding_text_max_weighted_hits))
+        factors = tuple(self.cfg.inference.finding_text_diminishing_factors) or (1.0,)
+
+        effective_weighted = 0.0
+        for idx in range(weighted_hits):
+            factor = float(factors[min(idx, len(factors) - 1)])
+            effective_weighted += max(0.0, factor)
+            if effective_weighted >= float(max_weighted_hits):
+                effective_weighted = float(max_weighted_hits)
+                break
+
+        scaled_weight = int(round(float(base_weight) * (effective_weighted / float(max_weighted_hits))))
+        if scaled_weight <= 0 and total_hits >= min_hits:
+            scaled_weight = 1
+
+        conflict_tokens = tuple(self.cfg.inference.finding_text_conflict_tokens)
+        conflict_hits = _count_conflict_token_hits(conflict_tokens, normalized_text_blob, text_terms)
+        conflict_penalty = min(
+            scaled_weight,
+            int(self.cfg.inference.finding_text_conflict_penalty) * conflict_hits,
+        )
+        final_weight = scaled_weight - conflict_penalty
+
+        trace = (
+            f"token_hits={total_hits}, source_hits=title:{title_hits}|description:{description_hits}|plugin_output:{plugin_output_hits}, "
+            f"weighted_hits={weighted_hits}, effective_weighted={effective_weighted:.2f}, conflict_hits={conflict_hits}, "
+            f"applied_weight={final_weight:+d}"
+        )
+        return True, final_weight, trace
+
+    def _predicate_matches(
+        self,
+        pred: ParsedPredicate,
+        ip: str,
+        hostname: str,
+        criticality: str,
+        ports_set: set[int],
+        finding_text_blob: str,
+        normalized_text_blob: str,
+        text_terms: set[str],
+    ) -> bool:
+        _ = finding_text_blob
         name = pred.name
 
         if name == "ip_is_public":
@@ -965,6 +1448,9 @@ class TopNPass(Pass):
             return any(p in ports_set for p in pred.ports)
         if name == "hostname_contains_any":
             return any(tok in hostname for tok in pred.tokens)
+        if name == "finding_text_contains_any":
+            min_hits = int(self.cfg.inference.finding_text_min_token_matches)
+            return _count_finding_text_token_hits(pred.tokens, normalized_text_blob, text_terms) >= min_hits
         if name == "criticality_is":
             return criticality in pred.tokens
 

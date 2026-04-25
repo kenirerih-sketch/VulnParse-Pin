@@ -9,17 +9,12 @@ Welcome to the VulnParse-Pin documentation index! This page serves as a comprehe
 - [Upgrade and Migration](Upgrade%20and%20Migration.md)
 - [Troubleshooting](Troubleshooting.md)
 - [Output Interpretation](Output%20Interpretation.md)
-- [Upgrade and Migration](Upgrade%20and%20Migration.md)
-- [Troubleshooting](Troubleshooting.md)
-- [Output Interpretation](Output%20Interpretation.md)
 - [RunManifest Overview](RunManifest.md)
 
 ## Product and strategy
 
 - [Why VulnParse-Pin Exists](Why%20VulnParse-Pin%20Exists.md)
 - [Mission Statement](Mission%20Statement.md)
-- [CVSS vs VulnParse Scoring Comparison](CVSS_vs_VulnParse_Scoring_Comparison.md)
-- [Value Proposition One Pager](Value_Proposition_One_Pager.md)
 - [CVSS vs VulnParse Scoring Comparison](CVSS_vs_VulnParse_Scoring_Comparison.md)
 - [Value Proposition One Pager](Value_Proposition_One_Pager.md)
 - [Licensing](Licensing.md)
@@ -30,13 +25,11 @@ Welcome to the VulnParse-Pin documentation index! This page serves as a comprehe
 - [Extension Playbooks](Extension%20Playbooks.md)
 - [Enrichment Seam Contract](Enrichment%20Seam%20Contract.md)
 - [Config Seam Contract](Config%20Seam%20Contract.md)
-- [Extension Playbooks](Extension%20Playbooks.md)
-- [Enrichment Seam Contract](Enrichment%20Seam%20Contract.md)
-- [Config Seam Contract](Config%20Seam%20Contract.md)
 - [Detection and Parsing](Detection%20and%20Parsing.md)
 - [Pipeline System](Pipeline%20System.md)
 - [Pass Phases](Pass%20Phases.md)
 - [Identity Contract](Identity%20Contract.md)
+- [Nmap Context Deep Dive](Nmap%20Context%20Deep%20Dive.md)
 
 ## Security and governance
 
@@ -53,7 +46,6 @@ Welcome to the VulnParse-Pin documentation index! This page serves as a comprehe
 ## Operations and performance
 
 - [Configs](Configs.md)
-- [Testing Guide](Testing%20Guide.md)
 - [Testing Guide](Testing%20Guide.md)
 - [Performance Optimizations](Performance%20Optimizations.md)
 - [Benchmarks](Benchmarks.md)

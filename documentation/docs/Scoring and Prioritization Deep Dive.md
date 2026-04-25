@@ -15,11 +15,21 @@ Primary implementation files:
 - `src/vulnparse_pin/resources/scoring.json`
 - `src/vulnparse_pin/resources/tn_triage.json`
 
+## Triage methodology baseline
+
+VulnParse-Pin applies a real-world impact probability first triage model by default:
+
+- prioritize findings and assets with the highest near-term likelihood of meaningful operational impact
+- treat exploitability and exposure evidence as first-order decision signals
+- use chain/pathway context as decision support, with bounded influence
+
+This baseline should be tuned for your environment. Adjust scoring and TopN policy to match business goals, risk tolerance, and regulatory obligations.
+
 ## Pass dependency chain
 
 Default pass order:
 
-1. `Scoring@1.0`
+1. `Scoring@2.0`
 2. `TopN@1.0`
 3. `Summary@1.0`
 
@@ -27,7 +37,7 @@ Default pass order:
 
 ## Scoring policy model
 
-`ScoringPolicyV1` is loaded from `scoring.json` using `load_score_policy(...)`.
+`ScoringPolicyV1` is loaded from `scoring.json` using `load_score_policy(...)` and supplemented by `nmap_ctx.scoring_port_bonus` from `config.yaml`.
 
 Core policy groups:
 
@@ -36,6 +46,8 @@ Core policy groups:
 - band thresholds (`critical`, `high`, `medium`, `low`)
 - weights (`epss_high`, `epss_medium`, `kev`, `exploit`)
 - risk ceiling (`max_raw_risk`, `max_operational_risk`)
+- finding-level CVE aggregation (`finding_cve_score`, `finding_cve_decay`, `finding_cve_max_contributors`)
+- Nmap context (`nmap_port_bonus`, default `0.0`)
 
 Bootstrap validates monotonic bands and non-negative constraints before pass execution.
 
@@ -43,17 +55,19 @@ Bootstrap validates monotonic bands and non-negative constraints before pass exe
 
 Scoring computation in `scoringPass.py`:
 
-1. Start with base CVSS contribution when present.
-2. Add EPSS contribution after clamping EPSS to policy bounds and scaling.
-3. Apply EPSS high or medium multipliers based on EPSS threshold tiers.
-4. Add KEV evidence contribution when KEV is present.
-5. Add exploit evidence contribution when exploit signal is present.
+1. Build a per-CVE preview for every retained `finding.cve_analysis` record using CVSS, EPSS, KEV, and exploit signals.
+2. Sort contributor CVEs by descending raw preview score.
+3. Aggregate contributor raw scores with bounded decay (`1.0`, `decay`, `decay^2`, ...) up to `finding_cve_max_contributors`.
+4. Fall back to scanner/enrichment rollup fields when no per-CVE analysis is present.
+5. Add Nmap port bonus when a confirmed open port matches the finding's service port and `scoring_port_bonus > 0`.
 
 `raw_score` is the composite pre-normalization score.
 
 `operational_score` is normalized by `max_raw_risk` and clamped to `max_operational_risk`.
 
 Risk band is assigned from raw score thresholds.
+
+`score_trace` captures the full contributor list, per-CVE contribution weights, display CVE, union flags, and final scoring summary. This trace is stored in both `assets[].findings[].score_trace` and `derived["Scoring@2.0"].scored_findings[*].score_trace`.
 
 ## Scoring execution strategy and thresholds
 
@@ -75,6 +89,17 @@ Additional controls:
 - Process worker payloads are serialization-safe plain structures.
 
 These are performance optimizations only; output semantics remain deterministic.
+
+## Whole-of-CVEs trace model
+
+For findings that carry `cve_analysis`, `ScoringPass` no longer uses the display or authoritative CVE as the score source. Instead:
+
+- `display_cve` remains presentation-oriented and is retained in the trace for operator continuity.
+- `primary_cve` is the highest-impact contributor after sorting.
+- `contributors[*].raw_contribution` shows the exact bounded impact of each CVE on the final finding score.
+- `contributors[*].aggregation_weight` shows the decay weight applied to that CVE.
+
+This preserves auditability without requiring downstream consumers to recompute the aggregation logic.
 
 ## TopN configuration model
 
@@ -98,6 +123,18 @@ TopN policy is loaded from `tn_triage.json` and normalized into `TNTriageConfig`
 - rule set
 
 Semantic validation enforces invariants and rejects invalid structures.
+
+## Nmap context tiebreak
+
+When `nmap_ctx.port_tiebreak_enabled` is `true` (default), TopN ranking injects an `nmap_hit` flag into all three sort key positions:
+
+- Finding sort within asset: `(-score, -nmap_hit, finding_id)`
+- Asset sort: `(-score, -crit_high, -crit_rank, -scorable_count, -nmap_confirmed, asset_id)`
+- Global finding sort: `(-score, -nmap_hit, asset_id, finding_id)`
+
+This promotes findings and assets with confirmed open ports within equal-score groups without altering numeric scores. The tiebreak is disabled when the pass returns an empty port index (no `--nmap-ctx` provided, or `port_tiebreak_enabled: false`).
+
+See [Nmap Context Deep Dive](Nmap%20Context%20Deep%20Dive.md) for full configuration details and operational guidance.
 
 ## TopN ranking flow
 
@@ -167,4 +204,8 @@ Derived outputs are append-only under versioned pass keys.
 - [Configs](Configs.md)
 - [Pass Phases](Pass%20Phases.md)
 - [Pipeline System](Pipeline%20System.md)
+- [Nmap Context Deep Dive](Nmap%20Context%20Deep%20Dive.md)
+- [ACI Feature Explanation](ACI%20Feature%20Explanation.md)
+- [ACI Rule Authoring Tutorial](ACI%20Rule%20Authoring%20Tutorial.md)
+- [ACI Technical Deep Dive](ACI%20Technical%20Deep%20Dive.md)
 - [CVSS vs VulnParse-Pin: Technical Scoring Comparison](CVSS_vs_VulnParse_Scoring_Comparison.md)

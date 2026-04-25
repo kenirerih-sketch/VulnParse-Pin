@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -44,8 +44,29 @@ def _file_sha256(path: Optional[Path]) -> Optional[str]:
     return _sha256_bytes(path.read_bytes())
 
 
+def _coerce_mapping(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if is_dataclass(value):
+        coerced = asdict(value)
+        return coerced if isinstance(coerced, dict) else {}
+    if hasattr(value, "__dict__"):
+        return dict(getattr(value, "__dict__", {}))
+    return {}
+
+
+def _sequence_len(value: Any) -> int:
+    if isinstance(value, (str, bytes, bytearray)):
+        return 0
+    try:
+        return len(value)
+    except TypeError:
+        return 0
+
+
 def _summarize_pass_metrics(pass_name: str, data: Any) -> Dict[str, Any]:
-    if not isinstance(data, dict):
+    data = _coerce_mapping(data)
+    if not data:
         return {}
 
     name = str(pass_name or "").lower()
@@ -55,6 +76,24 @@ def _summarize_pass_metrics(pass_name: str, data: Any) -> Dict[str, Any]:
         scored_findings = data.get("scored_findings")
         asset_scores = data.get("asset_scores")
         asset_criticality = data.get("asset_criticality")
+        whole_cve_traces = 0
+        union_exploit_findings = 0
+        union_kev_findings = 0
+        if isinstance(scored_findings, dict):
+            for rec in scored_findings.values():
+                if not isinstance(rec, dict):
+                    continue
+                trace = rec.get("score_trace", {})
+                if not isinstance(trace, dict):
+                    continue
+                if trace.get("aggregation_mode"):
+                    whole_cve_traces += 1
+                union = trace.get("union_flags", {})
+                if isinstance(union, dict):
+                    if bool(union.get("exploit", False)):
+                        union_exploit_findings += 1
+                    if bool(union.get("kev", False)):
+                        union_kev_findings += 1
         metrics = {
             "total_findings": int(coverage.get("total_findings", 0) or 0),
             "scored_findings": int(
@@ -67,6 +106,9 @@ def _summarize_pass_metrics(pass_name: str, data: Any) -> Dict[str, Any]:
             "highest_risk_asset_score": data.get("highest_risk_asset_score"),
             "avg_scored_risk": data.get("avg_scored_risk"),
             "avg_operational_risk": data.get("avg_operational_risk"),
+            "whole_cve_trace_findings": whole_cve_traces,
+            "union_exploit_findings": union_exploit_findings,
+            "union_kev_findings": union_kev_findings,
         }
         return metrics
 
@@ -75,24 +117,94 @@ def _summarize_pass_metrics(pass_name: str, data: Any) -> Dict[str, Any]:
         findings_by_asset = data.get("findings_by_asset")
         global_top = data.get("global_top_findings")
         error_block = data.get("error") if isinstance(data.get("error"), dict) else {}
+        whole_cve_reason_mentions = 0
+        if isinstance(findings_by_asset, dict):
+            for ranked in findings_by_asset.values():
+                if not isinstance(ranked, (list, tuple)):
+                    continue
+                for finding in ranked:
+                    if not isinstance(finding, dict):
+                        continue
+                    reasons = finding.get("reasons", [])
+                    if not isinstance(reasons, (list, tuple)):
+                        continue
+                    if any("Whole-of-CVEs Aggregated" in str(reason) for reason in reasons):
+                        whole_cve_reason_mentions += 1
         return {
             "rank_basis": data.get("rank_basis"),
             "status": data.get("status", "ok"),
             "error_code": error_block.get("code"),
             "k": data.get("k"),
-            "decay_weights": len(data.get("decay", [])) if isinstance(data.get("decay"), list) else 0,
-            "ranked_assets": len(assets) if isinstance(assets, list) else 0,
+            "decay_weights": _sequence_len(data.get("decay")),
+            "ranked_assets": _sequence_len(assets),
             "assets_with_ranked_findings": len(findings_by_asset) if isinstance(findings_by_asset, dict) else 0,
-            "global_top_findings": len(global_top) if isinstance(global_top, list) else 0,
+            "global_top_findings": _sequence_len(global_top),
+            "whole_cve_reason_mentions": whole_cve_reason_mentions,
         }
 
     if name == "summary":
         overview = data.get("overview", {}) if isinstance(data.get("overview"), dict) else {}
         top_risks = data.get("top_risks")
+        remediation = data.get("remediation_priorities", {}) if isinstance(data.get("remediation_priorities"), dict) else {}
+        aggregated_top_risks = 0
+        if isinstance(top_risks, (list, tuple)):
+            for item in top_risks:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("aggregated_cve_count") is not None:
+                    aggregated_top_risks += 1
         return {
             "total_assets": int(overview.get("total_assets", 0) or 0),
             "total_findings": int(overview.get("total_findings", 0) or 0),
-            "top_risks": len(top_risks) if isinstance(top_risks, list) else 0,
+            "top_risks": _sequence_len(top_risks),
+            "top_risks_with_aggregated_context": aggregated_top_risks,
+            "immediate_action": int(remediation.get("immediate_action", 0) or 0),
+            "high_priority": int(remediation.get("high_priority", 0) or 0),
+            "medium_priority": int(remediation.get("medium_priority", 0) or 0),
+        }
+
+    if name == "aci":
+        metrics = data.get("metrics", {}) if isinstance(data.get("metrics"), dict) else {}
+        caps = metrics.get("capabilities_detected", {}) if isinstance(metrics.get("capabilities_detected"), dict) else {}
+        chains = metrics.get("chain_candidates_detected", {}) if isinstance(metrics.get("chain_candidates_detected"), dict) else {}
+        conf = metrics.get("confidence_buckets", {}) if isinstance(metrics.get("confidence_buckets"), dict) else {}
+        return {
+            "total_findings": int(metrics.get("total_findings", 0) or 0),
+            "inferred_findings": int(metrics.get("inferred_findings", 0) or 0),
+            "coverage_ratio": float(metrics.get("coverage_ratio", 0.0) or 0.0),
+            "uplifted_findings": int(metrics.get("uplifted_findings", 0) or 0),
+            "capability_types": len(caps),
+            "chain_types": len(chains),
+            "confidence_low": int(conf.get("low", 0) or 0),
+            "confidence_medium": int(conf.get("medium", 0) or 0),
+            "confidence_high": int(conf.get("high", 0) or 0),
+        }
+
+    if name == "nmap_adapter":
+        asset_open_ports = data.get("asset_open_ports") if isinstance(data.get("asset_open_ports"), dict) else {}
+        nse_cves_by_asset = data.get("nse_cves_by_asset") if isinstance(data.get("nse_cves_by_asset"), dict) else {}
+        unmatched_asset_ids = data.get("unmatched_asset_ids") if isinstance(data.get("unmatched_asset_ids"), (list, tuple)) else []
+
+        open_port_bindings = 0
+        for ports in asset_open_ports.values():
+            if isinstance(ports, (list, tuple, set)):
+                open_port_bindings += len(ports)
+
+        nse_cve_bindings = 0
+        for cves in nse_cves_by_asset.values():
+            if isinstance(cves, (list, tuple, set)):
+                nse_cve_bindings += len(cves)
+
+        return {
+            "status": data.get("status"),
+            "source_file": data.get("source_file"),
+            "host_count": int(data.get("host_count", 0) or 0),
+            "matched_asset_count": int(data.get("matched_asset_count", 0) or 0),
+            "unmatched_asset_count": len(unmatched_asset_ids),
+            "assets_with_open_ports": len(asset_open_ports),
+            "assets_with_nse_cves": len(nse_cves_by_asset),
+            "open_port_bindings": open_port_bindings,
+            "nse_cve_bindings": nse_cve_bindings,
         }
 
     return {}

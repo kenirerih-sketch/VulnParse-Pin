@@ -42,6 +42,7 @@ class Finding:
     raw_risk_score: Optional[float] = None
     risk_score: Optional[float] = None
     risk_band: Optional[str] = None
+    score_trace: Dict[str, Any] = field(default_factory=dict)
     affected_port: Optional[int] = None
     protocol: Optional[str] = None
     detection_plugin: Optional[str] = None
@@ -52,6 +53,16 @@ class Finding:
     triage_priority: Optional[str] = None
     enriched: Optional[bool] = False
     enrichment_source_cve: Optional[str] = None
+    cve_analysis: List[Dict[str, Any]] = field(default_factory=list)
+    enrichment_sources: List[str] = field(default_factory=list)
+    confidence: int = 0
+    confidence_evidence: Dict[str, int] = field(default_factory=dict)
+    source_format: Optional[str] = None
+    fidelity_tier: Optional[str] = None
+    missing_fields: List[str] = field(default_factory=list)
+    degraded_input: bool = False
+    ingestion_confidence: Optional[float] = None
+    confidence_reasons: List[str] = field(default_factory=list)
     asset_id: Optional[str] = None
 
 @dataclass
@@ -115,6 +126,10 @@ class AssetObservation:
     hostname: Optional[str]
     criticality: Optional[str] = None
     open_ports: Tuple[int, ...] = field(default_factory=tuple)
+    finding_text_blob: str = ""
+    finding_title_blob: str = ""
+    finding_description_blob: str = ""
+    finding_plugin_output_blob: str = ""
 
 
 @dataclass(frozen=True)
@@ -164,6 +179,32 @@ class Services:
     post_enrichment_index: Optional[PostEnrichmentIndex] = None
     ledger: Optional["LedgerService"] = None
     runmanifest_mode: str = "compact"
+    nmap_ctx_config: Optional[dict] = None
+    webhook_config: Optional["WebhookRuntimeConfig"] = None
+
+
+@dataclass(frozen=True)
+class WebhookEndpointConfig:
+    url: str
+    enabled: bool = True
+    oal_filter: str = "all"
+    format: str = "generic"
+
+
+@dataclass(frozen=True)
+class WebhookRuntimeConfig:
+    enabled: bool = False
+    signing_key_env: str = "VP_WEBHOOK_HMAC_KEY"
+    key_id: str = "primary"
+    timeout_seconds: int = 5
+    connect_timeout_seconds: int = 3
+    read_timeout_seconds: int = 5
+    max_retries: int = 2
+    max_payload_bytes: int = 262144
+    replay_window_seconds: int = 300
+    allow_spool: bool = True
+    spool_subdir: str = "webhook_spool"
+    endpoints: Tuple[WebhookEndpointConfig, ...] = field(default_factory=tuple)
 
 @dataclass(frozen = True)
 class RunContext:

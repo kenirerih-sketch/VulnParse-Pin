@@ -17,6 +17,7 @@ from vulnparse_pin.core.classes.dataclass import (
     AppPaths,
 )
 from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
+from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
 from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
 from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
 from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
@@ -43,7 +44,8 @@ def _assert_basic_scan(scan: ScanResult):
 def _run_derived(scan: ScanResult, ctx: RunContext) -> ScanResult:
     scoring = ScoringPass(_make_policy())
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     return runner.run_all(ctx, scan)
 
 
@@ -106,5 +108,5 @@ def test_parse_normalize_enrich_passes_smoke(ctx, parser_cls, input_path, use_fi
     _assert_basic_scan(scan)
     scan2 = _run_derived(scan, ctx)
     # derived outputs should have been produced
-    assert "Scoring@1.0" in scan2.derived.passes
+    assert "Scoring@2.0" in scan2.derived.passes
     assert "TopN@1.0" in scan2.derived.passes

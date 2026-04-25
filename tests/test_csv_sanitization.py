@@ -1,5 +1,11 @@
 
-from vulnparse_pin.utils.csv_exporter import (_sanitize_csv_cell, _sanitize_csv_row)
+from vulnparse_pin.utils.csv_exporter import (
+    _sanitize_csv_cell,
+    _sanitize_csv_row,
+    ANALYST_PROFILE_COLUMNS,
+    AUDIT_PROFILE_COLUMNS,
+    FULL_PROFILE_COLUMNS,
+)
 
 def test_sanitize_csv_cell_dangerous_prefix():
     """
@@ -84,6 +90,7 @@ def test_csv_export_includes_derived_fields_when_present(tmp_path):
     from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
     from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
     from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
+    from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
     from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
     from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
     from vulnparse_pin.core.classes.pass_classes import PassRunner
@@ -109,7 +116,8 @@ def test_csv_export_includes_derived_fields_when_present(tmp_path):
     )
     scoring = ScoringPass(policy)
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     scan = runner.run_all(ctx, scan)
 
     # export
@@ -128,6 +136,7 @@ def test_csv_export_handles_none_scores_gracefully(tmp_path):
     from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
     from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
     from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
+    from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
     from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
     from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
     from vulnparse_pin.core.classes.pass_classes import PassRunner
@@ -158,7 +167,8 @@ def test_csv_export_handles_none_scores_gracefully(tmp_path):
     )
     scoring = ScoringPass(policy)
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     scan = runner.run_all(ctx, scan)
 
     # export; should NOT raise TypeError even if scores are None
@@ -196,3 +206,144 @@ def test_csv_export_handles_none_scores_gracefully(tmp_path):
             f"Expected sentinel -1.0 for column '{header[idx]}' "
             f"when scores are missing for F_NOCVE, got {fnocve_cols[idx]!r}"
         )
+
+
+def test_csv_profile_full_preserves_legacy_header_order(tmp_path):
+    """Default/full profile must preserve existing CSV schema ordering for compatibility."""
+    from datetime import datetime
+    from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
+    from vulnparse_pin.utils.csv_exporter import export_to_csv
+    from vulnparse_pin.utils.logger import LoggerWrapper
+    from vulnparse_pin.io.pfhandler import PermFileHandler
+
+    logger = LoggerWrapper(log_file=str(tmp_path / "test.log"))
+    pfh = PermFileHandler(logger, root_dir=tmp_path, allowed_roots=[tmp_path])
+    ctx = RunContext(paths=AppPaths.resolve(portable=True), pfh=pfh, logger=logger)
+
+    meta = ScanMetaData(source="unit", scan_date=datetime.now(), asset_count=1, vulnerability_count=1)
+    finding = Finding(
+        finding_id="F1",
+        vuln_id="V1",
+        title="Example",
+        description="desc",
+        severity="Low",
+        cves=["CVE-2026-0001"],
+        asset_id="A1",
+    )
+    asset = Asset(hostname="host1", ip_address="10.0.0.1", findings=[finding])
+    scan = ScanResult(scan_metadata=meta, assets=[asset])
+
+    csvfile = tmp_path / "full.csv"
+    export_to_csv(ctx, scan, csv_path=csvfile, csv_profile="full")
+    header = csvfile.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert header == FULL_PROFILE_COLUMNS
+
+
+def test_csv_profile_analyst_outputs_targeted_columns(tmp_path):
+    """Analyst profile should emit triage-focused columns only."""
+    from datetime import datetime
+    from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
+    from vulnparse_pin.utils.csv_exporter import export_to_csv
+    from vulnparse_pin.utils.logger import LoggerWrapper
+    from vulnparse_pin.io.pfhandler import PermFileHandler
+
+    logger = LoggerWrapper(log_file=str(tmp_path / "test.log"))
+    pfh = PermFileHandler(logger, root_dir=tmp_path, allowed_roots=[tmp_path])
+    ctx = RunContext(paths=AppPaths.resolve(portable=True), pfh=pfh, logger=logger)
+
+    meta = ScanMetaData(source="unit", scan_date=datetime.now(), asset_count=1, vulnerability_count=1)
+    finding = Finding(
+        finding_id="F2",
+        vuln_id="V2",
+        title="Example2",
+        description="desc",
+        severity="High",
+        cves=["CVE-2026-0002"],
+        asset_id="A2",
+    )
+    asset = Asset(hostname="host2", ip_address="10.0.0.2", findings=[finding])
+    scan = ScanResult(scan_metadata=meta, assets=[asset])
+
+    csvfile = tmp_path / "analyst.csv"
+    export_to_csv(ctx, scan, csv_path=csvfile, csv_profile="analyst")
+    header = csvfile.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert header == ANALYST_PROFILE_COLUMNS
+    assert "solution" not in header
+    assert "description" not in header
+
+
+def test_csv_profile_audit_includes_traceability_columns(tmp_path):
+    """Audit profile should include aggregation and contributor traceability columns."""
+    from datetime import datetime
+    from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
+    from vulnparse_pin.utils.csv_exporter import export_to_csv
+    from vulnparse_pin.utils.logger import LoggerWrapper
+    from vulnparse_pin.io.pfhandler import PermFileHandler
+
+    logger = LoggerWrapper(log_file=str(tmp_path / "test.log"))
+    pfh = PermFileHandler(logger, root_dir=tmp_path, allowed_roots=[tmp_path])
+    ctx = RunContext(paths=AppPaths.resolve(portable=True), pfh=pfh, logger=logger)
+
+    meta = ScanMetaData(source="unit", scan_date=datetime.now(), asset_count=1, vulnerability_count=1)
+    finding = Finding(
+        finding_id="F3",
+        vuln_id="V3",
+        title="Example3",
+        description="desc",
+        severity="Critical",
+        cves=["CVE-2026-0003"],
+        asset_id="A3",
+    )
+    asset = Asset(hostname="host3", ip_address="10.0.0.3", findings=[finding])
+    scan = ScanResult(scan_metadata=meta, assets=[asset])
+
+    csvfile = tmp_path / "audit.csv"
+    export_to_csv(ctx, scan, csv_path=csvfile, csv_profile="audit")
+    header = csvfile.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert header == AUDIT_PROFILE_COLUMNS
+    assert "aggregation_mode" in header
+    assert "top_contributor_1_cve" in header
+
+
+def test_csv_profiles_surface_ghsa_visibility_fields(tmp_path):
+    from datetime import datetime
+    import csv
+    from vulnparse_pin.core.classes.dataclass import ScanResult, ScanMetaData, Asset, Finding, RunContext, AppPaths
+    from vulnparse_pin.utils.csv_exporter import export_to_csv
+    from vulnparse_pin.utils.logger import LoggerWrapper
+    from vulnparse_pin.io.pfhandler import PermFileHandler
+
+    logger = LoggerWrapper(log_file=str(tmp_path / "test.log"))
+    pfh = PermFileHandler(logger, root_dir=tmp_path, allowed_roots=[tmp_path])
+    ctx = RunContext(paths=AppPaths.resolve(portable=True), pfh=pfh, logger=logger)
+
+    meta = ScanMetaData(source="unit", scan_date=datetime.now(), asset_count=1, vulnerability_count=1)
+    finding = Finding(
+        finding_id="FGHSA",
+        vuln_id="VGHSA",
+        title="GHSA Finding",
+        description="desc",
+        severity="Medium",
+        cves=["CVE-2026-1234"],
+        asset_id="AGHSA",
+    )
+    finding.references = ["https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"]
+
+    asset = Asset(hostname="host-ghsa", ip_address="10.0.9.9", findings=[finding])
+    scan = ScanResult(scan_metadata=meta, assets=[asset])
+
+    analyst_csv = tmp_path / "analyst_ghsa.csv"
+    export_to_csv(ctx, scan, csv_path=analyst_csv, csv_profile="analyst")
+    with analyst_csv.open("r", encoding="utf-8", newline="") as fh:
+        row = next(csv.DictReader(fh))
+    assert row["ghsa_advisory_match"] == "True"
+    assert row["ghsa_reference_count"] == "1"
+
+    audit_csv = tmp_path / "audit_ghsa.csv"
+    export_to_csv(ctx, scan, csv_path=audit_csv, csv_profile="audit")
+    with audit_csv.open("r", encoding="utf-8", newline="") as fh:
+        row = next(csv.DictReader(fh))
+    assert "GHSA-xxxx-yyyy-zzzz" in row["ghsa_references"]

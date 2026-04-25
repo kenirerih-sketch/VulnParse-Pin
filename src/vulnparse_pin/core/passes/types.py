@@ -28,6 +28,7 @@ class ScoredFinding:
     operational_score: float
     risk_band: str
     reason: str = ""
+    score_trace: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True)
 class ScoreCoverage:
@@ -60,6 +61,7 @@ class ExposureInference:
     externally_facing_inferred: bool
     public_service_ports_inferred: bool
     evidence: Tuple[str, ...]
+    evidence_rule_ids: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,6 +105,71 @@ class TopNPassOutput:
 
 
 # -------------------------------------------
+# Attack Capability Inference (ACI) Pass
+# -------------------------------------------
+
+@dataclass(frozen=True)
+class ACIFindingSemantic:
+    finding_id: str
+    asset_id: str
+    confidence: float
+    confidence_factors: Tuple[str, ...] = ()
+    capabilities: Tuple[str, ...] = ()
+    chain_candidates: Tuple[str, ...] = ()
+    cwe_ids: Tuple[str, ...] = ()
+    evidence: Tuple[str, ...] = ()
+    exploit_boost_applied: float = 0.0
+    rank_uplift: float = 0.0
+
+
+@dataclass(frozen=True)
+class ACIAssetSemantic:
+    asset_id: str
+    weighted_confidence: float
+    max_confidence: float
+    capability_count: int
+    chain_candidate_count: int
+    ranked_finding_count: int
+    rank_uplift: float = 0.0
+
+
+@dataclass(frozen=True)
+class ACIPassMetrics:
+    total_findings: int
+    inferred_findings: int
+    coverage_ratio: float
+    capabilities_detected: Dict[str, int] = field(default_factory=dict)
+    chain_candidates_detected: Dict[str, int] = field(default_factory=dict)
+    confidence_buckets: Dict[str, int] = field(default_factory=dict)
+    uplifted_findings: int = 0
+
+
+@dataclass(frozen=True)
+class ACIPassOutput:
+    finding_semantics: Dict[str, ACIFindingSemantic] = field(default_factory=dict)
+    asset_semantics: Dict[str, ACIAssetSemantic] = field(default_factory=dict)
+    metrics: ACIPassMetrics = field(default_factory=lambda: ACIPassMetrics(0, 0, 0.0))
+
+
+# -------------------------------------------
+# Nmap Adapter Pass
+# -------------------------------------------
+
+@dataclass(frozen=True)
+class NmapAdapterPassOutput:
+    """
+    Derived Nmap adapter snapshot used by downstream scoring/TopN phases.
+    """
+    status: str
+    source_file: Optional[str]
+    host_count: int
+    matched_asset_count: int
+    unmatched_asset_ids: Tuple[str, ...] = ()
+    asset_open_ports: Dict[str, Tuple[int, ...]] = field(default_factory=dict)
+    nse_cves_by_asset: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
+
+
+# -------------------------------------------
 # Summary Pass
 # -------------------------------------------
 
@@ -118,3 +185,4 @@ class SummaryPassOutput:
     top_risks: Tuple[Dict[str, Any], ...]
     enrichment_metrics: Dict[str, Any]
     remediation_priorities: Dict[str, Any]
+    decision_trace_summary: Dict[str, Any] = field(default_factory=dict)

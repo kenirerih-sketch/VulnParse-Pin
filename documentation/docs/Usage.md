@@ -31,11 +31,21 @@ VulnParse-Pin also supports additional options to customize the analysis process
 ### General Options
 
 #### --demo
-- `--demo`: This option runs the tool in demo mode, which uses a predefined dataset to demonstrate the capabilities of VulnParse-Pin. Use it like this:
+
+- `--demo`: Runs the packaged full-pipeline demo profile using OpenVAS XML + Nmap context with GHSA online budget defaults. Use it like this:
 
 ```bash
 vpp --demo
 ```
+
+Demo profile defaults:
+
+- Input file: packaged `openvas_updated_test.xml` (15 assets / 2,000 findings)
+- Nmap context: packaged `base_test_nmap.xml`
+- GHSA mode: forced online (`--ghsa online` semantics)
+- GHSA budget: forced to `25`
+- Enrichment: KEV/EPSS/Exploit enabled, NVD enabled
+- Artifacts: JSON, CSV, executive markdown, technical markdown, runmanifest
 
 #### --pretty-print
 
@@ -82,6 +92,16 @@ vpp -f <input_file> -o <output_file> --log-level DEBUG
 Enrichment defaults to enabled + online for KEV, EPSS, and Exploit-DB.
 
 Use disable flags to turn a source off, and source flags to switch to offline cache/file mode.
+
+#### --nmap-ctx
+
+- `--nmap-ctx [-nmap] <path>`: Supply a Nmap XML file as supplementary attack-surface context. When provided, the Nmap adapter pass maps confirmed open ports to scan assets and makes port evidence available to downstream scoring and ranking passes. This flag is opt-in only; omitting it disables the adapter entirely.
+
+```bash
+vpp -f scan.nessus -o results.json --nmap-ctx nmap_results.xml
+```
+
+The file must have a `.xml` extension and be a valid Nmap `nmaprun` XML file. Policy controls for this feature are in `config.yaml` under `nmap_ctx`. See [Nmap Context Deep Dive](Nmap%20Context%20Deep%20Dive.md) for full details.
 
 #### --no-kev
 
@@ -155,6 +175,26 @@ vpp -f <input_file> -o <output_file> --exploit-source online
 vpp -f <input_file> -o <output_file> --exploit-db /path/to/exploit-db
 ```
 
+#### --ghsa
+
+- `--ghsa [PATH|online]`: Enable GitHub Security Advisory (GHSA) enrichment. Use bare `--ghsa` for online mode (queries the GitHub Advisories API) or `--ghsa <path>` for offline mode pointing to a local advisory database directory. GHSA enrichment is disabled by default — this flag is the only activation path at runtime.
+
+```bash
+# Online mode
+vpp -f scan.nessus -o results.json --ghsa
+
+# Offline mode
+vpp -f scan.nessus -o results.json --ghsa /path/to/advisory-database
+```
+
+#### --ghsa-budget
+
+- `--ghsa-budget <COUNT>`: Override the online GHSA prefetch CVE budget. Applies only when `--ghsa` is in online mode. Must be a positive integer. Config default is `25` (set via `enrichment.ghsa_online_prefetch_budget` in `config.yaml`).
+
+```bash
+vpp -f scan.nessus -o results.json --ghsa --ghsa-budget 50
+```
+
 #### --refresh-cache
 
 - `--refresh-cache`: This option forces the tool to refresh its cache during enrichment. This will ensure that the latest data is used for enrichment. Use it like this:
@@ -179,6 +219,43 @@ vpp -f <input_file> -o <output_file> --allow-regen
 vpp -f <input_file> -o <output_file> --no-nvd
 ```
 
+### Ingestion Quality Options
+
+Use these flags to control how strictly VulnParse-Pin accepts degraded parser input (for example constrained CSV exports):
+
+#### --allow-degraded-input / --no-allow-degraded-input
+
+- `--allow-degraded-input` (default) allows degraded findings to pass normalization.
+- `--no-allow-degraded-input` rejects runs that contain degraded findings.
+
+```bash
+vpp -f <input_file> -o <output_file> --no-allow-degraded-input
+```
+
+#### --strict-ingestion
+
+- `--strict-ingestion`: strict gate that rejects any degraded findings. This flag overrides `--allow-degraded-input`.
+
+```bash
+vpp -f <input_file> -o <output_file> --strict-ingestion
+```
+
+#### --min-ingestion-confidence
+
+- `--min-ingestion-confidence <0.0-1.0>`: reject the run if any finding's ingestion confidence is below the threshold.
+
+```bash
+vpp -f <input_file> -o <output_file> --min-ingestion-confidence 0.60
+```
+
+#### --show-ingestion-summary
+
+- `--show-ingestion-summary`: print ingestion quality summary metrics (average confidence, degraded counts, fidelity distribution).
+
+```bash
+vpp -f <input_file> -o <output_file> --show-ingestion-summary
+```
+
 ### Output Options
 
 #### --output
@@ -195,6 +272,67 @@ vpp -f <input_file> --output <output_file>
 
 ```bash
 vpp -f <input_file> --output-csv <csv_file>
+```
+
+#### --csv-profile
+
+- `--csv-profile <full|analyst|audit>`: Selects the CSV presentation profile.
+  - `full` (default): backward-compatible full schema for existing pipelines.
+  - `analyst`: triage-focused view with high-value operational fields.
+  - `audit`: traceability-focused view with contributor and aggregation context.
+
+```bash
+# Full legacy-compatible output
+vpp -f <input_file> --output-csv out.csv --csv-profile full
+
+# Analyst triage sheet
+vpp -f <input_file> --output-csv out_analyst.csv --csv-profile analyst
+
+# Audit traceability sheet
+vpp -f <input_file> --output-csv out_audit.csv --csv-profile audit
+```
+
+Note: non-default profiles require `--output-csv`.
+
+#### --webhook-endpoint
+
+- `--webhook-endpoint <HTTPS_URL>`: Send a signed webhook event for the run to a specific HTTPS endpoint. This is a one-off runtime override and does not require editing config files.
+
+```bash
+set VP_WEBHOOK_HMAC_KEY=replace_with_strong_random_secret
+vpp -f scan.nessus -o results.json --webhook-endpoint https://hooks.example.org/vpp
+```
+
+#### --webhook-oal-filter
+
+- `--webhook-oal-filter <all|P1|P1b|P2>`: Restrict webhook `top_findings` payload content to one Operational Action Lane. Use with `--webhook-endpoint`.
+
+```bash
+vpp -f scan.nessus -o results.json --webhook-endpoint https://hooks.example.org/vpp --webhook-oal-filter P1
+```
+
+#### Persistent webhook config (config.yaml)
+
+Use the `webhook` block in `src/vulnparse_pin/resources/config.yaml` for persistent endpoint delivery.
+
+```yaml
+webhook:
+  enabled: true
+  signing_key_env: VP_WEBHOOK_HMAC_KEY
+  key_id: primary
+  timeout_seconds: 5
+  connect_timeout_seconds: 3
+  read_timeout_seconds: 5
+  max_retries: 2
+  max_payload_bytes: 262144
+  replay_window_seconds: 300
+  allow_spool: true
+  spool_subdir: webhook_spool
+  endpoints:
+    - url: https://hooks.example.org/vpp
+      enabled: true
+      oal_filter: all
+      format: generic
 ```
 
 #### --output-md

@@ -26,7 +26,7 @@ feed_cache:
       enabled: true
       ttl_yearly: 24
       ttl_modified: 2
-      start_year: 2023
+      start_year: 2000
       end_year: 2025
       sqlite_enforce_permissions: true
       sqlite_file_mode: "0o600"
@@ -35,4 +35,45 @@ feed_cache:
 
 summary:
   top_n_findings: 20
+
+enrichment:
+  ghsa_source: null
+  ghsa_online_prefetch_budget: 25
+  ghsa_token_env: VP_GHSA_TK
+  ghsa_cache:
+    sqlite_max_age_hours: 336
+    sqlite_max_rows: 500000
+  confidence:
+    model_version: v1
+    max_score: 100
+    base_scanner: 35
+    weights:
+      nvd: 25
+      kev: 15
+      epss: 10
+      exploitdb: 10
+      ghsa: 15
+    ghsa_signals:
+      advisory_confidence_bonus: 3
+      max_advisory_confidence_bonus: 9
+      exploit_signal_on_high_severity: false
+      exploit_signal_confidence_bonus: 5
+
+nmap_ctx:
+  port_tiebreak_enabled: true
+  scoring_port_bonus: 0.0
+
+webhook:
+  enabled: false
+  signing_key_env: VP_WEBHOOK_HMAC_KEY
+  key_id: primary
+  timeout_seconds: 5
+  connect_timeout_seconds: 3
+  read_timeout_seconds: 5
+  max_retries: 2
+  max_payload_bytes: 262144
+  replay_window_seconds: 300
+  allow_spool: true
+  spool_subdir: webhook_spool
+  endpoints: []
 

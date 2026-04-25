@@ -17,10 +17,12 @@ from typing import Any
 
 from vulnparse_pin import __version__
 from vulnparse_pin.core.apppaths import AppPaths, ensure_user_configs, load_config
-from vulnparse_pin.core.classes.dataclass import FeedSpec, RunContext, Services
+from vulnparse_pin.core.classes.dataclass import FeedSpec, RunContext, Services, WebhookEndpointConfig, WebhookRuntimeConfig
 from vulnparse_pin.core.classes.execution_manifest import LedgerService
 from vulnparse_pin.core.classes.pass_classes import PassRunner
 from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
+from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
+from vulnparse_pin.core.passes.Nmap.nmap_adapter_pass import NmapAdapterPass
 from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
 from vulnparse_pin.core.passes.Summary.summary_pass import SummaryConfig, SummaryPass
 from vulnparse_pin.core.passes.TopN.TN_triage_config import TriageConfigLoadResult, load_tn_config
@@ -56,6 +58,54 @@ class RuntimeBootstrapState:
     detector: SchemaDetector
     passesList: list[Any]
     passOrchestrator: PassRunner
+
+
+def _build_webhook_runtime_config(cfg_yaml: dict, args: Any) -> WebhookRuntimeConfig:
+    webhook_cfg = cfg_yaml.get("webhook", {}) if isinstance(cfg_yaml, dict) else {}
+    if not isinstance(webhook_cfg, dict):
+        webhook_cfg = {}
+
+    filter_override = getattr(args, "webhook_oal_filter", None)
+    cli_endpoint = getattr(args, "webhook_endpoint", None)
+
+    endpoints: list[WebhookEndpointConfig] = []
+    if cli_endpoint:
+        endpoints.append(
+            WebhookEndpointConfig(
+                url=str(cli_endpoint),
+                enabled=True,
+                oal_filter=str(filter_override or "all"),
+                format="generic",
+            )
+        )
+    else:
+        for raw_endpoint in webhook_cfg.get("endpoints", []):
+            if not isinstance(raw_endpoint, dict):
+                continue
+            endpoints.append(
+                WebhookEndpointConfig(
+                    url=str(raw_endpoint.get("url", "")).strip(),
+                    enabled=bool(raw_endpoint.get("enabled", False)),
+                    oal_filter=str(filter_override or raw_endpoint.get("oal_filter", "all")),
+                    format=str(raw_endpoint.get("format", "generic")),
+                )
+            )
+
+    enabled = bool(cli_endpoint) or bool(webhook_cfg.get("enabled", False))
+    return WebhookRuntimeConfig(
+        enabled=enabled,
+        signing_key_env=str(webhook_cfg.get("signing_key_env", "VP_WEBHOOK_HMAC_KEY")),
+        key_id=str(webhook_cfg.get("key_id", "primary")),
+        timeout_seconds=int(webhook_cfg.get("timeout_seconds", 5)),
+        connect_timeout_seconds=int(webhook_cfg.get("connect_timeout_seconds", 3)),
+        read_timeout_seconds=int(webhook_cfg.get("read_timeout_seconds", 5)),
+        max_retries=int(webhook_cfg.get("max_retries", 2)),
+        max_payload_bytes=int(webhook_cfg.get("max_payload_bytes", 262144)),
+        replay_window_seconds=int(webhook_cfg.get("replay_window_seconds", 300)),
+        allow_spool=bool(webhook_cfg.get("allow_spool", True)),
+        spool_subdir=str(webhook_cfg.get("spool_subdir", "webhook_spool")),
+        endpoints=tuple(endpoints),
+    )
 
 
 def initialize_runtime(args) -> RuntimeBootstrapState:
@@ -104,7 +154,9 @@ def initialize_runtime(args) -> RuntimeBootstrapState:
 
     topn_pol: TriageConfigLoadResult = load_tn_config(ctx, topn_cfg)
 
-    score_pol: ScoringPolicyV1 = load_score_policy(scoring_cfg)
+    nmap_ctx_cfg = cfg_yaml.get("nmap_ctx", {}) or {}
+    nmap_port_bonus = float(nmap_ctx_cfg.get("scoring_port_bonus", 0.0))
+    score_pol: ScoringPolicyV1 = load_score_policy(scoring_cfg, nmap_port_bonus=nmap_port_bonus)
     try:
         _require(score_pol.w_epss_high >= 0, "w_epss_high must be >= 0")
         _require(score_pol.w_epss_medium >= 0, "w_epss_medium must be >= 0")
@@ -152,6 +204,8 @@ def initialize_runtime(args) -> RuntimeBootstrapState:
         topn_config=topn_pol.config,
         ledger=LedgerService(),
         runmanifest_mode=getattr(args, "runmanifest_mode", "compact"),
+        nmap_ctx_config=nmap_ctx_cfg,
+        webhook_config=_build_webhook_runtime_config(cfg_yaml, args),
     )
     ctx = RunContext(paths=paths, pfh=pfh, logger=logger, services=services)
 
@@ -175,6 +229,23 @@ def initialize_runtime(args) -> RuntimeBootstrapState:
     logger.print_info(f"Using config: {cfg_yaml_path.name}", label="Global Config")
     logger.print_info(f"Using scoring config: {cfg_score_path.name}", label="Scoring Weight Config")
     logger.print_info(f"Using TopN Pass Config: {cfg_topn_path.name}", label="TopN Pass Config")
+    enrichment_cfg = cfg_yaml.get("enrichment", {}) if isinstance(cfg_yaml, dict) else {}
+    ghsa_source = getattr(args, "ghsa", None)
+    confidence_cfg = enrichment_cfg.get("confidence") if isinstance(enrichment_cfg, dict) else None
+    if isinstance(confidence_cfg, dict):
+        model_version = confidence_cfg.get("model_version", "v1")
+        base_scanner = confidence_cfg.get("base_scanner", 35)
+        max_score = confidence_cfg.get("max_score", 100)
+        weights = confidence_cfg.get("weights", {})
+        logger.print_info(
+            f"Confidence model={model_version}; base_scanner={base_scanner}; max_score={max_score}; "
+            f"weights={weights}",
+            label="Enrichment Confidence",
+        )
+    logger.print_info(
+        f"GHSA source: {ghsa_source if ghsa_source else 'disabled'}",
+        label="GHSA Config",
+    )
     logger.debug("\n%s", pfh.describe_policy(), extra={"vp_label": "PFH Policy"})
 
     summary_cfg = cfg_yaml.get("summary", {}) if isinstance(cfg_yaml, dict) else {}
@@ -183,7 +254,9 @@ def initialize_runtime(args) -> RuntimeBootstrapState:
         summary_top_n = 1
 
     passesList = [
+        NmapAdapterPass(getattr(args, "nmap_ctx", None)),
         ScoringPass(ctx.services.scoring_config),
+        AttackCapabilityInferencePass(ctx.services.topn_config.aci),
         TopNPass(ctx.services.topn_config),
         SummaryPass(SummaryConfig(include_top_risks=summary_top_n)),
     ]

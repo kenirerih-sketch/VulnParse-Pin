@@ -20,6 +20,7 @@ from vulnparse_pin.core.classes.dataclass import (
     ScanResult,
 )
 from vulnparse_pin.core.classes.scoring_pol import ScoringPolicyV1
+from vulnparse_pin.core.passes.ACI.aci_pass import AttackCapabilityInferencePass
 from vulnparse_pin.core.passes.Scoring.scoringPass import ScoringPass
 from vulnparse_pin.core.passes.TopN.topn_pass import TopNPass
 from vulnparse_pin.core.passes.TopN.TN_triage_config import _safe_fallback_config
@@ -64,7 +65,8 @@ def _run_full_pipeline(scan: ScanResult, ctx: RunContext) -> ScanResult:
     """Run scoring + topn passes."""
     scoring = ScoringPass(_make_policy())
     topn = TopNPass(_safe_fallback_config())
-    runner = PassRunner([scoring, topn])
+    aci = AttackCapabilityInferencePass(_safe_fallback_config().aci)
+    runner = PassRunner([scoring, aci, topn])
     return runner.run_all(ctx, scan)
 
 
@@ -108,7 +110,7 @@ class TestNessusXMLRealWorld:
 
         scan = _run_full_pipeline(scan, ctx)
 
-        assert "Scoring@1.0" in scan.derived.passes
+        assert "Scoring@2.0" in scan.derived.passes
         assert "TopN@1.0" in scan.derived.passes
 
     def test_real_nessus_csv_export(self, ctx, tmp_path):
@@ -164,7 +166,7 @@ class TestOpenVASXMLRealWorld:
 
         scan = _run_full_pipeline(scan, ctx)
 
-        assert "Scoring@1.0" in scan.derived.passes
+        assert "Scoring@2.0" in scan.derived.passes
         assert "TopN@1.0" in scan.derived.passes
 
     def test_real_openvas_csv_export(self, ctx, tmp_path):
@@ -280,7 +282,7 @@ class TestEdgeCases:
         if zero_cve_findings:
             # verify they don't break scoring
             scan = _run_full_pipeline(scan, ctx)
-            assert "Scoring@1.0" in scan.derived.passes
+            assert "Scoring@2.0" in scan.derived.passes
 
     def test_openvas_with_missing_cvss(self, ctx):
         """Should handle findings with missing CVSS scores."""

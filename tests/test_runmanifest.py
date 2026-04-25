@@ -21,6 +21,7 @@ from vulnparse_pin.utils.schema_validate import validate_runmanifest_schema
 class _PfhStub:
     @contextmanager
     def open_for_write(self, output_path: Path, mode: str = "w", encoding: str = "utf-8", label: str = ""):
+        del label
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open(mode=mode, encoding=encoding) as handle:
             yield handle
@@ -53,8 +54,20 @@ def _make_scan_result() -> ScanResult:
 def _make_scan_result_with_passes() -> ScanResult:
     scan = _make_scan_result()
 
+    nmap_adapter = DerivedPassResult(
+        meta=PassMeta(name="nmap_adapter", version="1.0", created_at_utc="2026-03-29T00:00:00Z"),
+        data={
+            "status": "enabled",
+            "source_file": "sample_nmap.xml",
+            "host_count": 1,
+            "matched_asset_count": 1,
+            "unmatched_asset_ids": ["asset-b"],
+            "asset_open_ports": {"asset-a": [22, 443]},
+            "nse_cves_by_asset": {"asset-a": ["CVE-2021-44228"]},
+        },
+    )
     scoring = DerivedPassResult(
-        meta=PassMeta(name="Scoring", version="1.0", created_at_utc="2026-03-29T00:00:00Z"),
+        meta=PassMeta(name="Scoring", version="1.0", created_at_utc="2026-03-29T00:00:01Z"),
         data={
             "coverage": {"total_findings": 10, "scored_findings": 8, "coverage_ratio": 0.8},
             "asset_scores": {"asset-a": 7.5, "asset-b": 5.1},
@@ -66,7 +79,7 @@ def _make_scan_result_with_passes() -> ScanResult:
         },
     )
     topn = DerivedPassResult(
-        meta=PassMeta(name="TopN", version="1.0", created_at_utc="2026-03-29T00:00:01Z"),
+        meta=PassMeta(name="TopN", version="1.0", created_at_utc="2026-03-29T00:00:02Z"),
         data={
             "rank_basis": "operational",
             "k": 3,
@@ -77,7 +90,7 @@ def _make_scan_result_with_passes() -> ScanResult:
         },
     )
     summary = DerivedPassResult(
-        meta=PassMeta(name="Summary", version="1.0", created_at_utc="2026-03-29T00:00:02Z"),
+        meta=PassMeta(name="Summary", version="1.0", created_at_utc="2026-03-29T00:00:03Z"),
         data={
             "overview": {"total_assets": 2, "total_findings": 10},
             "top_risks": [{"finding_id": "f-1"}],
@@ -86,6 +99,7 @@ def _make_scan_result_with_passes() -> ScanResult:
 
     scan.derived = DerivedContext(
         passes={
+            "nmap_adapter@1.0": nmap_adapter,
             "Scoring@1.0": scoring,
             "TopN@1.0": topn,
             "Summary@1.0": summary,
@@ -239,9 +253,43 @@ def test_runmanifest_populates_pass_metrics_and_mode(tmp_path: Path):
 
     assert manifest["runmanifest_mode"] == "expanded"
     metrics_by_name = {p["name"]: p["metrics"] for p in manifest["pass_summaries"]}
+    assert metrics_by_name["nmap_adapter"]["status"] == "enabled"
+    assert metrics_by_name["nmap_adapter"]["host_count"] == 1
+    assert metrics_by_name["nmap_adapter"]["matched_asset_count"] == 1
+    assert metrics_by_name["nmap_adapter"]["assets_with_open_ports"] == 1
+    assert metrics_by_name["nmap_adapter"]["open_port_bindings"] == 2
     assert metrics_by_name["Scoring"]["scored_findings"] == 8
     assert metrics_by_name["TopN"]["ranked_assets"] == 1
     assert metrics_by_name["Summary"]["total_assets"] == 2
+
+
+def test_runmanifest_enrichment_stats_include_ghsa_auth_rejections(tmp_path: Path):
+    ctx = _make_context(tmp_path)
+    scan_result = _make_scan_result()
+    scanner_input = tmp_path / "input.nessus"
+    scanner_input.write_text("dummy", encoding="utf-8")
+
+    manifest = build_runmanifest(
+        ctx=ctx,
+        _args=SimpleNamespace(),
+        scan_result=scan_result,
+        sources={
+            "exploitdb": False,
+            "kev": True,
+            "epss": True,
+            "nvd": "Enabled",
+            "stats": {
+                "kev_hits": 1,
+                "epss_hits": 1,
+                "exploit_hits": 0,
+                "ghsa_auth_token_rejections": 2,
+            },
+        },
+        scanner_input=scanner_input,
+        output_paths={"json": None, "csv": None, "md": None, "md_technical": None},
+    )
+
+    assert manifest["enrichment_summary"]["stats"]["ghsa_auth_token_rejections"] == 2
 
 
 def test_runmanifest_topn_skipped_artifact_metrics(tmp_path: Path):
@@ -382,3 +430,162 @@ def test_runmanifest_overwrite_replaces_tampered_file(tmp_path: Path):
     assert verified["manifest_version"] == "1.0"
     assert "TAMPERED_BY_TEST" not in manifest_path.read_text(encoding="utf-8")
     assert baseline_hash != manifest_path.read_bytes()
+
+
+def test_runmanifest_captures_whole_cve_alignment_metrics(tmp_path: Path):
+    ctx = _make_context(tmp_path)
+    scan = _make_scan_result()
+    scanner_input = tmp_path / "input.nessus"
+    scanner_input.write_text("dummy", encoding="utf-8")
+
+    scoring = DerivedPassResult(
+        meta=PassMeta(name="Scoring", version="2.0", created_at_utc="2026-03-29T00:00:00Z"),
+        data={
+            "coverage": {"total_findings": 2, "scored_findings": 2, "coverage_ratio": 1.0},
+            "scored_findings": {
+                "F1": {
+                    "raw_score": 9.1,
+                    "operational_score": 9.1,
+                    "risk_band": "Critical",
+                    "reason": "Whole-of-CVEs Aggregated",
+                    "score_trace": {
+                        "aggregation_mode": "stacked_decay",
+                        "union_flags": {"exploit": True, "kev": False},
+                    },
+                },
+                "F2": {
+                    "raw_score": 8.2,
+                    "operational_score": 8.2,
+                    "risk_band": "High",
+                    "reason": "Whole-of-CVEs Aggregated",
+                    "score_trace": {
+                        "aggregation_mode": "stacked_decay",
+                        "union_flags": {"exploit": False, "kev": True},
+                    },
+                },
+            },
+        },
+    )
+
+    topn = DerivedPassResult(
+        meta=PassMeta(name="TopN", version="1.0", created_at_utc="2026-03-29T00:00:01Z"),
+        data={
+            "rank_basis": "raw",
+            "k": 3,
+            "decay": [1.0, 0.7, 0.4],
+            "assets": [{"asset_id": "asset-a", "rank": 1}],
+            "findings_by_asset": {
+                "asset-a": [
+                    {"finding_id": "F1", "rank": 1, "reasons": ["Whole-of-CVEs Aggregated", "Nmap Port Observed"]},
+                    {"finding_id": "F2", "rank": 2, "reasons": ["Whole-of-CVEs Aggregated"]},
+                ]
+            },
+            "global_top_findings": [{"finding_id": "F1", "rank": 1}],
+        },
+    )
+
+    summary = DerivedPassResult(
+        meta=PassMeta(name="Summary", version="1.0", created_at_utc="2026-03-29T00:00:02Z"),
+        data={
+            "overview": {"total_assets": 1, "total_findings": 2},
+            "top_risks": [
+                {
+                    "cve": "CVE-2026-5000",
+                    "finding_risk_score": 9.1,
+                    "aggregated_cve_count": 3,
+                    "aggregated_exploitable_cve_count": 1,
+                }
+            ],
+            "remediation_priorities": {
+                "immediate_action": 1,
+                "high_priority": 1,
+                "medium_priority": 0,
+            },
+        },
+    )
+
+    scan.derived = DerivedContext(
+        passes={
+            "Scoring@2.0": scoring,
+            "TopN@1.0": topn,
+            "Summary@1.0": summary,
+        }
+    )
+
+    manifest = build_runmanifest(
+        ctx=ctx,
+        _args=SimpleNamespace(),
+        scan_result=scan,
+        sources={"exploitdb": False, "kev": False, "epss": False, "nvd": "Disabled", "stats": {}},
+        scanner_input=scanner_input,
+        output_paths={"json": None, "csv": None, "md": None, "md_technical": None},
+    )
+
+    metrics_by_name = {p["name"]: p["metrics"] for p in manifest["pass_summaries"]}
+
+    assert metrics_by_name["Scoring"]["whole_cve_trace_findings"] == 2
+    assert metrics_by_name["Scoring"]["union_exploit_findings"] == 1
+    assert metrics_by_name["Scoring"]["union_kev_findings"] == 1
+
+    assert metrics_by_name["TopN"]["whole_cve_reason_mentions"] == 2
+
+    assert metrics_by_name["Summary"]["top_risks_with_aggregated_context"] == 1
+    assert metrics_by_name["Summary"]["immediate_action"] == 1
+    assert metrics_by_name["Summary"]["high_priority"] == 1
+
+
+def test_runmanifest_handles_tuple_and_namespace_pass_payloads(tmp_path: Path):
+    ctx = _make_context(tmp_path)
+    scan = _make_scan_result()
+    scanner_input = tmp_path / "input.nessus"
+    scanner_input.write_text("dummy", encoding="utf-8")
+
+    topn = DerivedPassResult(
+        meta=PassMeta(name="TopN", version="1.0", created_at_utc="2026-03-29T00:00:01Z"),
+        data={
+            "rank_basis": "raw",
+            "k": 5,
+            "decay": (1.0, 0.7, 0.4),
+            "assets": ({"asset_id": "asset-a", "rank": 1},),
+            "findings_by_asset": {
+                "asset-a": (
+                    {"finding_id": "F1", "rank": 1, "reasons": ("Whole-of-CVEs Aggregated",)},
+                )
+            },
+            "global_top_findings": ({"finding_id": "F1", "rank": 1},),
+        },
+    )
+
+    summary_data = SimpleNamespace(
+        overview={"total_assets": 1, "total_findings": 2},
+        top_risks=(
+            {
+                "cve": "CVE-2026-5000",
+                "finding_risk_score": 9.1,
+                "aggregated_cve_count": 2,
+            },
+        ),
+        remediation_priorities={"immediate_action": 1, "high_priority": 1, "medium_priority": 0},
+    )
+    summary = DerivedPassResult(
+        meta=PassMeta(name="Summary", version="1.0", created_at_utc="2026-03-29T00:00:02Z"),
+        data=summary_data,
+    )
+
+    scan.derived = DerivedContext(passes={"TopN@1.0": topn, "Summary@1.0": summary})
+
+    manifest = build_runmanifest(
+        ctx=ctx,
+        _args=SimpleNamespace(),
+        scan_result=scan,
+        sources={"exploitdb": False, "kev": False, "epss": False, "nvd": "Disabled", "stats": {}},
+        scanner_input=scanner_input,
+        output_paths={"json": None, "csv": None, "md": None, "md_technical": None},
+    )
+
+    metrics_by_name = {p["name"]: p["metrics"] for p in manifest["pass_summaries"]}
+    assert metrics_by_name["TopN"]["decay_weights"] == 3
+    assert metrics_by_name["TopN"]["ranked_assets"] == 1
+    assert metrics_by_name["TopN"]["global_top_findings"] == 1
+    assert metrics_by_name["Summary"]["total_assets"] == 1
+    assert metrics_by_name["Summary"]["top_risks"] == 1

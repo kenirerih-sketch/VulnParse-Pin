@@ -4,67 +4,140 @@
   "title": "VulnParse-Pin Global Config Schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["feed_cache", "summary"],
+  "required": [
+    "feed_cache",
+    "summary"
+  ],
   "properties": {
     "version": {
       "type": "string",
-      "enum": ["v1"]
+      "enum": [
+        "v1"
+      ]
     },
     "feed_cache": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["defaults", "ttl_hours", "feeds"],
+      "required": [
+        "defaults",
+        "ttl_hours",
+        "feeds"
+      ],
       "properties": {
         "defaults": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["ttl_hours"],
+          "required": [
+            "ttl_hours"
+          ],
           "properties": {
-            "ttl_hours": { "type": "integer", "minimum": 1, "maximum": 8760 }
+            "ttl_hours": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            }
           }
         },
         "ttl_hours": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["exploit_db", "kev", "epss", "nvd_yearly", "nvd_modified"],
+          "required": [
+            "exploit_db",
+            "kev",
+            "epss",
+            "nvd_yearly",
+            "nvd_modified"
+          ],
           "properties": {
-            "exploit_db": { "type": "integer", "minimum": 1, "maximum": 8760 },
-            "kev": { "type": "integer", "minimum": 1, "maximum": 8760 },
-            "epss": { "type": "integer", "minimum": 1, "maximum": 8760 },
-            "nvd_yearly": { "type": "integer", "minimum": 1, "maximum": 8760 },
-            "nvd_modified": { "type": "integer", "minimum": 1, "maximum": 8760 }
+            "exploit_db": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            },
+            "kev": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            },
+            "epss": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            },
+            "nvd_yearly": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            },
+            "nvd_modified": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8760
+            }
           }
         },
         "feeds": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["exploit_db", "kev", "epss", "nvd"],
+          "required": [
+            "exploit_db",
+            "kev",
+            "epss",
+            "nvd"
+          ],
           "properties": {
             "exploit_db": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "ttl_hours"],
+              "required": [
+                "enabled",
+                "ttl_hours"
+              ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "ttl_hours": { "type": "integer", "minimum": 1, "maximum": 8760 }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ttl_hours": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8760
+                }
               }
             },
             "kev": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "ttl_hours"],
+              "required": [
+                "enabled",
+                "ttl_hours"
+              ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "ttl_hours": { "type": "integer", "minimum": 1, "maximum": 8760 }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ttl_hours": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8760
+                }
               }
             },
             "epss": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["enabled", "ttl_hours"],
+              "required": [
+                "enabled",
+                "ttl_hours"
+              ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "ttl_hours": { "type": "integer", "minimum": 1, "maximum": 8760 }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ttl_hours": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8760
+                }
               }
             },
             "nvd": {
@@ -82,15 +155,46 @@
                 "sqlite_max_rows"
               ],
               "properties": {
-                "enabled": { "type": "boolean" },
-                "ttl_yearly": { "type": "integer", "minimum": 1, "maximum": 8760 },
-                "ttl_modified": { "type": "integer", "minimum": 1, "maximum": 8760 },
-                "start_year": { "type": "integer", "minimum": 2002, "maximum": 2100 },
-                "end_year": { "type": "integer", "minimum": 2002, "maximum": 2100 },
-                "sqlite_enforce_permissions": { "type": "boolean" },
-                "sqlite_file_mode": { "type": "string", "pattern": "^0o[0-7]{3}$" },
-                "sqlite_max_age_hours": { "type": "integer", "minimum": 1, "maximum": 100000 },
-                "sqlite_max_rows": { "type": "integer", "minimum": 1, "maximum": 100000000 }
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ttl_yearly": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8760
+                },
+                "ttl_modified": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8760
+                },
+                "start_year": {
+                  "type": "integer",
+                  "minimum": 2002,
+                  "maximum": 2100
+                },
+                "end_year": {
+                  "type": "integer",
+                  "minimum": 2002,
+                  "maximum": 2100
+                },
+                "sqlite_enforce_permissions": {
+                  "type": "boolean"
+                },
+                "sqlite_file_mode": {
+                  "type": "string",
+                  "pattern": "^0o[0-7]{3}$"
+                },
+                "sqlite_max_age_hours": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100000
+                },
+                "sqlite_max_rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100000000
+                }
               }
             }
           }
@@ -100,9 +204,285 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["top_n_findings"],
+      "required": [
+        "top_n_findings"
+      ],
       "properties": {
-        "top_n_findings": { "type": "integer", "minimum": 1, "maximum": 500 }
+        "top_n_findings": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        }
+      }
+    },
+    "enrichment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confidence"
+      ],
+      "properties": {
+        "ghsa_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "ghsa_online_prefetch_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5000
+        },
+        "ghsa_token_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "ghsa_cache": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sqlite_max_age_hours",
+            "sqlite_max_rows"
+          ],
+          "properties": {
+            "sqlite_max_age_hours": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000
+            },
+            "sqlite_max_rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100000000
+            }
+          }
+        },
+        "confidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_version",
+            "max_score",
+            "base_scanner",
+            "weights"
+          ],
+          "properties": {
+            "model_version": {
+              "type": "string",
+              "enum": [
+                "v1"
+              ]
+            },
+            "max_score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "base_scanner": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "weights": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nvd",
+                "kev",
+                "epss",
+                "exploitdb",
+                "ghsa"
+              ],
+              "properties": {
+                "nvd": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "kev": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "epss": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "exploitdb": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "ghsa": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              }
+            },
+            "ghsa_signals": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "advisory_confidence_bonus",
+                "max_advisory_confidence_bonus",
+                "exploit_signal_on_high_severity",
+                "exploit_signal_confidence_bonus"
+              ],
+              "properties": {
+                "advisory_confidence_bonus": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "max_advisory_confidence_bonus": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "exploit_signal_on_high_severity": {
+                  "type": "boolean"
+                },
+                "exploit_signal_confidence_bonus": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "nmap_ctx": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port_tiebreak_enabled": {
+          "type": "boolean"
+        },
+        "scoring_port_bonus": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 5.0
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "signing_key_env",
+        "key_id",
+        "timeout_seconds",
+        "connect_timeout_seconds",
+        "read_timeout_seconds",
+        "max_retries",
+        "max_payload_bytes",
+        "replay_window_seconds",
+        "allow_spool",
+        "spool_subdir",
+        "endpoints"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "signing_key_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}$"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "connect_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "read_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "max_payload_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 10485760
+        },
+        "replay_window_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 86400
+        },
+        "allow_spool": {
+          "type": "boolean"
+        },
+        "spool_subdir": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "endpoints": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "url",
+              "enabled",
+              "oal_filter",
+              "format"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 12,
+                "maxLength": 2048
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "oal_filter": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "P1",
+                  "P1b",
+                  "P2"
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "generic"
+                ]
+              }
+            }
+          }
+        }
       }
     }
   }

@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Any, Dict, Tuple, Sequence, TYPE_CHECKING
 
 from vulnparse_pin.core.passes.TopN.TN_triage_schema import (
@@ -18,9 +20,12 @@ from vulnparse_pin.core.passes.TopN.TN_triage_schema import (
     validate_topn_cfg_schema
 )
 from vulnparse_pin.core.passes.TopN.TN_triage_semantics import (
+    ACIConfig,
+    ACIExploitBoost,
     ConfidenceThreshold,
     InferenceConfig,
     SemanticIssue,
+    TriagePolicyConfig,
     TNTriageConfig,
     TopNConfig,
     validate_and_normalize_semantics,
@@ -149,8 +154,60 @@ def _safe_fallback_config() -> TNTriageConfig:
         confidence_thresholds=ConfidenceThreshold(low=2, medium=5, high=8),
         public_service_ports=(),
         public_service_ports_set=frozenset(),
-        allow_predicates=frozenset({"ip_is_public", "ip_is_private", "any_port_in_public_list", "port_in", "hostname_contains_any", "criticality_is"}),
+        allow_predicates=frozenset({"ip_is_public", "ip_is_private", "any_port_in_public_list", "port_in", "hostname_contains_any", "finding_text_contains_any", "criticality_is"}),
+        finding_text_min_token_matches=2,
+        finding_text_title_weight=3,
+        finding_text_description_weight=2,
+        finding_text_plugin_output_weight=1,
+        finding_text_max_weighted_hits=4,
+        finding_text_conflict_tokens=tuple(),
+        finding_text_conflict_penalty=2,
+        finding_text_diminishing_factors=(1.0, 0.6, 0.4),
         rules=(),
     )
 
-    return TNTriageConfig(topn=topn, inference=inference)
+    aci = _fallback_aci_config()
+    triage_policy = _fallback_triage_policy_config()
+
+    return TNTriageConfig(topn=topn, inference=inference, aci=aci, triage_policy=triage_policy)
+
+
+def _fallback_aci_config() -> ACIConfig:
+    """
+    Build fallback ACI defaults from packaged tn_triage.json when possible.
+    This avoids duplicating every capability/chain rule in code.
+    """
+    try:
+        base_dir = Path(__file__).resolve().parents[3]
+        resource_path = base_dir / "resources" / "tn_triage.json"
+        raw = json.loads(resource_path.read_text(encoding="utf-8"))
+        normalized, issues = validate_and_normalize_semantics(raw)
+        if normalized is not None and not issues:
+            return normalized.aci
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # Last-resort ACI fallback if packaged defaults cannot be loaded/parsed.
+    return ACIConfig(
+        enabled=False,
+        min_confidence=0.6,
+        max_uplift=2.0,
+        asset_uplift_weight=0.5,
+        exploit_boost=ACIExploitBoost(enabled=True, weight=0.25, max_bonus=0.2),
+        capability_rules=(),
+        chain_rules=(),
+    )
+
+
+def _fallback_triage_policy_config() -> TriagePolicyConfig:
+    return TriagePolicyConfig(
+        enabled=True,
+        oal1_risk_bands=("critical", "high"),
+        oal1_require_public_exposure=True,
+        oal1_require_exploit_or_kev=True,
+        oal2_risk_bands=("critical", "high", "medium"),
+        oal2_min_aci_confidence=0.8,
+        oal2_require_chain_candidate=True,
+        oal2_require_public_exposure=True,
+        preserve_oal1_precedence=True,
+    )

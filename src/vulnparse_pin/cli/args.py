@@ -13,30 +13,40 @@ import argparse
 import os
 from pathlib import Path
 from typing import Optional, Sequence, Union
+from urllib.parse import urlsplit
 
 from vulnparse_pin import __version__
 
 PathLikeSimple = Union[str, Path]
 
-_DEMO_SAMPLE_NAME = "Lab_test_scaled_5k.nessus"
+_DEMO_NMAP_SAMPLE_NAME = "base_test_nmap.xml"
+_DEMO_OPENVAS_SAMPLE_NAME = "openvas_updated_test.xml"
 
-def _resolve_demo_sample() -> Optional[Path]:
-    """Return the absolute path to the bundled demo sample, or None if not found.
+def _resolve_demo_inputs() -> tuple[Optional[Path], Optional[Path]]:
+    """Return (openvas_sample_path, nmap_sample_path) for demo mode.
 
-    Uses importlib.resources so the file is correctly located whether the package
-    is installed via pip (as a wheel/egg) or run directly from source.
+    OpenVAS and Nmap samples are resolved from packaged vulnparse_pin.resources
+    so demo mode works consistently in source and installed environments.
     """
+    openvas_path: Optional[Path] = None
+    nmap_path: Optional[Path] = None
+
+    # Resolve packaged OpenVAS + Nmap demo samples.
     from importlib import resources
     try:
-        # Python 3.9+ path — returns a traversable that survives zip/wheel installs.
-        ref = resources.files("vulnparse_pin.resources").joinpath(_DEMO_SAMPLE_NAME)
+        openvas_ref = resources.files("vulnparse_pin.resources").joinpath(_DEMO_OPENVAS_SAMPLE_NAME)
+        if openvas_ref.is_file():
+            with resources.as_file(openvas_ref) as p:
+                openvas_path = p.resolve()
+
+        ref = resources.files("vulnparse_pin.resources").joinpath(_DEMO_NMAP_SAMPLE_NAME)
         if ref.is_file():
-            # Materialize to a real filesystem path (works with zipimport too).
             with resources.as_file(ref) as p:
-                return p.resolve()
+                nmap_path = p.resolve()
     except (TypeError, FileNotFoundError, ModuleNotFoundError):
         pass
-    return None
+
+    return openvas_path, nmap_path
 
 
 def parse_mode(value: str) -> int:
@@ -75,6 +85,35 @@ def valid_input_file(path: PathLikeSimple) -> Path:
     return Path(path)
 
 
+def valid_existing_path(path: PathLikeSimple) -> Path:
+    if not os.path.exists(path):
+        raise argparse.ArgumentTypeError(f"Path: '{path}' does not exist.")
+    if not (os.path.isfile(path) or os.path.isdir(path)):
+        raise argparse.ArgumentTypeError(f"Path: '{path}' must be a file or directory.")
+    if not os.access(path, os.R_OK):
+        raise argparse.ArgumentTypeError(f"Path: '{path}' is not readable.")
+    return Path(path)
+
+
+def valid_nmap_adapter_file(path: PathLikeSimple) -> Path:
+    resolved = valid_input_file(path)
+    if resolved.suffix.lower() != ".xml":
+        raise argparse.ArgumentTypeError("Nmap adapter source must be an .xml file.")
+    return resolved
+
+
+def valid_https_url(value: str) -> str:
+    url = str(value).strip()
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "https":
+        raise argparse.ArgumentTypeError("Webhook endpoint must use https.")
+    if not parts.netloc:
+        raise argparse.ArgumentTypeError("Webhook endpoint must include a host.")
+    if parts.username or parts.password:
+        raise argparse.ArgumentTypeError("Webhook endpoint must not embed credentials.")
+    return url
+
+
 def valid_log_level(level):
     levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     lvl = level.upper()
@@ -96,7 +135,7 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     port_group = parser.add_argument_group("Portability", "Options to run VulnParse in a portable setting.")
     output_group = parser.add_argument_group("Output Options", "Flags that deal with output such as output location or presentation modes.")
     gen_group.add_argument("--file", "-f", help="Path to vulnerability scan file", required=False, default=None, type=valid_input_file)
-    gen_group.add_argument("--demo", action="store_true", default=False, help="Run a full end-to-end pipeline demo using the bundled Lab_test.nessus sample. Takes no additional input.")
+    gen_group.add_argument("--demo", action="store_true", default=False, help="Run a full end-to-end demo using OpenVAS XML + Nmap context with GHSA online budget defaults.")
     enrich_group.add_argument("--no-kev", action="store_true", default=False, help="Disable KEV enrichment.")
     enrich_group.add_argument("--no-epss", action="store_true", default=False, help="Disable EPSS enrichment.")
     enrich_group.add_argument("--no-exploit", action="store_true", default=False, help="Disable Exploit-DB enrichment.")
@@ -105,6 +144,9 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     enrich_group.add_argument("--exploit-source", "-es", choices=['online', 'offline'], default='online', help="Select if you want to pull exploit dataset from an online or offline source.")
     enrich_group.add_argument("--kev-feed", type=str, help="Optional KEV feed override (URL or local path).")
     enrich_group.add_argument("--epss-feed", type=str, help="Optional EPSS feed override (URL or local path).")
+    enrich_group.add_argument("--ghsa", nargs="?", const="online", default=None, metavar="[PATH|online]", help="Enable GHSA enrichment. Use --ghsa for online mode or --ghsa <path> for an offline local advisory source.")
+    enrich_group.add_argument("--ghsa-budget", type=int, default=None, metavar="COUNT", help="Optional GHSA online lookup budget override. Applies only to online GHSA mode.")
+    enrich_group.add_argument("--nmap-ctx", "-nmap", type=valid_nmap_adapter_file, default=None, metavar="PATH", help="Optional Nmap XML adapter source used to enrich derived attack-surface context.")
     output_group.add_argument("--output", "-o", metavar="FILE", help="File to output results to. Output is in JSON")
     output_group.add_argument(
         "--verify-runmanifest",
@@ -121,9 +163,22 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     enrich_group.add_argument("--allow_regen", action="store_true", help="Allows regeneration of cache meta and checksum if missing using 'best-effort'.", default=False)
     enrich_group.add_argument("--no-nvd", action="store_true", help="Disables NVD Enrichment module[No NVD enrichment processing]")
     output_group.add_argument("--output-csv", "-oC", type=str, metavar="PATH", help="Path to save enriched results in CSV format (optional)")
+    output_group.add_argument(
+        "--csv-profile",
+        choices=["full", "analyst", "audit"],
+        default="full",
+        help="CSV output profile. 'full' preserves legacy columns; 'analyst' and 'audit' provide focused triage/reporting views.",
+    )
     output_group.add_argument("--output-md", "-oM", type=str, metavar="PATH", help="Generate executive summary Markdown report")
     output_group.add_argument("--output-md-technical", "-oMT", type=str, metavar="PATH", help="Generate detailed technical Markdown report")
     output_group.add_argument("--output-runmanifest", "-oRM", type=str, metavar="PATH", help="Generate run manifest JSON artifact with embedded decision ledger")
+    output_group.add_argument("--webhook-endpoint", type=valid_https_url, metavar="URL", help="Override configured webhook delivery target with a single HTTPS endpoint.")
+    output_group.add_argument(
+        "--webhook-oal-filter",
+        choices=["all", "P1", "P1b", "P2"],
+        metavar="LANE",
+        help="Override webhook OAL lane filter for configured or CLI-specified endpoints.",
+    )
     output_group.add_argument(
         "--runmanifest-mode",
         choices=["compact", "expanded"],
@@ -145,20 +200,32 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     output_group.add_argument("--overlay-mode", choices=["flatten", "namespace"], default="flatten", help="Overlay mode used with --presentation. "
                               "'flatten' injects scoring fields at finding root; "
                               "'namespace' stores scoring under finding.derived.")
+    gen_group.add_argument("--allow-degraded-input", action=argparse.BooleanOptionalAction, default=True, help="Allow partial/minimal ingestion findings to continue through pipeline (default behavior).")
+    gen_group.add_argument("--strict-ingestion", action="store_true", default=False, help="Fail normalization if degraded ingestion findings are present.")
+    gen_group.add_argument("--min-ingestion-confidence", type=float, default=0.0, metavar="0.0-1.0", help="Reject findings whose ingestion confidence falls below this threshold.")
+    gen_group.add_argument("--show-ingestion-summary", action="store_true", default=False, help="Print ingestion quality summary after parser normalization.")
 
     args = parser.parse_args(argv)
 
     # --demo: inject hardcoded sample path — takes no user input.
     if args.demo:
-        demo_path = _resolve_demo_sample()
-        if demo_path is None:
+        demo_openvas_path, demo_nmap_path = _resolve_demo_inputs()
+        if demo_openvas_path is None or demo_nmap_path is None:
             parser.error(
-                "--demo: sample file not found. Expected at "
-                "'samples/nessus/Lab_test.nessus' relative to the project root or CWD."
+                "--demo: required demo samples not found. Expected OpenVAS fixture at "
+                "packaged resource 'openvas_updated_test.xml' and packaged Nmap context "
+                "sample 'base_test_nmap.xml'."
             )
-        if not os.access(demo_path, os.R_OK):
-            parser.error(f"--demo: sample file is not readable: {demo_path}")
-        args.file = demo_path
+        if not os.access(demo_openvas_path, os.R_OK):
+            parser.error(f"--demo: OpenVAS sample file is not readable: {demo_openvas_path}")
+        if not os.access(demo_nmap_path, os.R_OK):
+            parser.error(f"--demo: Nmap sample file is not readable: {demo_nmap_path}")
+
+        args.file = demo_openvas_path
+        args.nmap_ctx = demo_nmap_path
+        args.ghsa = "online"
+        args.ghsa_budget = 25
+
         # Demo mode is always online and runs a full end-to-end artifact set.
         args.no_kev = False
         args.no_epss = False
@@ -174,14 +241,16 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         if not args.output_runmanifest:
             args.output_runmanifest = "demo_runmanifest.json"
         print(
-            "\n[DEMO MODE] Running full pipeline on bundled sample: "
-            f"{demo_path}\n"
+            "\n[DEMO MODE] Running full pipeline on OpenVAS + Nmap context samples:\n"
+            f"OpenVAS: {demo_openvas_path}\n"
+            f"Nmap ctx: {demo_nmap_path}\n"
             "Enrichment forced: KEV/EPSS/Exploit enabled with online sources (NVD enabled).\n"
-            "Artifacts enabled: JSON, CSV, executive Markdown, technical Markdown.\n"
+            "GHSA forced: online mode with budget=25.\n"
+            "Artifacts enabled: JSON, CSV, executive Markdown, technical Markdown, runmanifest.\n"
             "Output will be written to the configured output directory.\n"
         )
     elif args.file is None and not args.verify_runmanifest:
-        parser.error("the following arguments are required: --file/-f (or use --demo to run on the bundled sample)")
+        parser.error("the following arguments are required: --file/-f (or use --demo to run the OpenVAS + Nmap demo profile)")
 
     # Individual flags, if explicitly provided, take precedence.
     if args.output_all:
@@ -204,6 +273,9 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         if not os.access(verify_path, os.R_OK):
             parser.error(f"--verify-runmanifest: file is not readable: {args.verify_runmanifest}")
 
+    if args.webhook_oal_filter and not (args.webhook_endpoint or args.file or args.demo):
+        parser.error("--webhook-oal-filter requires a normal scan execution context.")
+
     if args.output:
         output_dir = os.path.dirname(os.path.abspath(args.output)) or '.'
         if not os.access(output_dir, os.W_OK):
@@ -212,10 +284,37 @@ def get_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     if args.overlay_mode != "flatten" and (not args.presentation):
         parser.error("--overlay-mode requires --presentation")
 
+    if args.min_ingestion_confidence < 0.0 or args.min_ingestion_confidence > 1.0:
+        parser.error("--min-ingestion-confidence must be between 0.0 and 1.0")
+
+    if args.strict_ingestion:
+        args.allow_degraded_input = False
+
     if (not args.output_csv) and args.no_csv_sanitize:
         parser.error("[Security Warning] --no-csv-sanitize requires --output-csv")
 
+    if args.csv_profile != "full" and not args.output_csv:
+        parser.error("--csv-profile requires --output-csv when using non-default profiles.")
+
     if (not args.no_exploit) and (args.exploit_source == "offline") and (not args.exploit_db):
         parser.error("Offline exploit source requires --exploit-db to be set.")
+
+    if args.ghsa is not None:
+        ghsa_value = str(args.ghsa).strip()
+        if not ghsa_value:
+            args.ghsa = "online"
+        elif ghsa_value.lower() == "online":
+            args.ghsa = "online"
+        else:
+            args.ghsa = valid_existing_path(ghsa_value)
+
+    if args.ghsa_budget is not None and args.ghsa_budget < 1:
+        parser.error("--ghsa-budget must be a positive integer.")
+
+    if args.ghsa_budget is not None and args.ghsa != "online":
+        parser.error("--ghsa-budget requires online GHSA mode (--ghsa or --ghsa online).")
+
+    if args.nmap_ctx is not None:
+        args.nmap_ctx = valid_nmap_adapter_file(args.nmap_ctx)
 
     return args

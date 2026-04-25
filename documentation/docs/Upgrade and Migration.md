@@ -34,6 +34,20 @@ New run artifact and verification workflows are available:
 - `--runmanifest-mode <compact|expanded>`
 - `--verify-runmanifest <path>`
 
+### GHSA Activation Is CLI-Only
+
+GHSA enrichment no longer auto-activates from config defaults.
+
+- GHSA is disabled unless `--ghsa` is provided at runtime.
+- Use `--ghsa` or `--ghsa online` for online advisory lookups.
+- Use `--ghsa <path>` for offline advisory database/repo loading.
+- Optional online prefetch limit can be set per-run with `--ghsa-budget <count>`.
+
+Notes:
+
+- `enrichment.ghsa_source` in `config.yaml` is retained for compatibility documentation only and is not used to auto-enable GHSA.
+- Token env var selection is controlled by `enrichment.ghsa_token_env` (default `VP_GHSA_TK`) with `GITHUB_TOKEN` fallback.
+
 ## Flag Migration Matrix
 
 | Legacy pattern | Current pattern | Notes |
@@ -90,7 +104,7 @@ Review:
 
 - Run success and expected output artifacts
 - Expected enrichment coverage for your selected source modes
-- `derived["Scoring@1.0"]`, `derived["TopN@1.0"]`, and `derived["Summary@1.0"]` presence
+- `derived["Scoring@2.0"]`, `derived["TopN@1.0"]`, and `derived["Summary@1.0"]` presence
 
 ## Related Docs
 
